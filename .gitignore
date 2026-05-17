@@ -1,0 +1,82 @@
+# Instructor-provided guide files (private — do not commit)
+BTEC_L6_Unit2_Independent_Project_Template.docx
+Student_Guide_Recommendation_System.docx
+Unit2_Independent_Project_Student_Starter_Guide.docx
+Unit2_Project_Kickoff.md
+document_pdf.pdf
+
+# Dataset files (too large for git, download from Kaggle)
+data/*
+!data/.gitkeep
+!data/README.md
+
+# Full Kaggle dataset zip (28 GB — never commit)
+h-and-m-personalized-fashion-recommendations.zip
+*.zip
+
+# Trained models (regenerate from notebooks)
+models/*
+!models/.gitkeep
+!models/README.md
+
+# Outputs (figures, metrics, exports)
+outputs/*
+!outputs/.gitkeep
+!outputs/README.md
+
+# Personal logbook (keep private — used for reflective evaluation)
+logbook.md
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+notebooks/.ipynb_checkpoints
+
+# IDE / editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Environment variables
+.env
+.env.local
+
+# Logs
+*.log

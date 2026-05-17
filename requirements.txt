@@ -1,0 +1,32 @@
+# Core data
+pandas>=2.1.0
+numpy>=1.26.0
+scipy>=1.11.0
+
+# ML — classical
+scikit-learn>=1.4.0
+implicit>=0.7.2
+# scikit-surprise dropped — numpy 1.x/2.x ABI conflict; we use `implicit` for ALS
+# lightfm dropped — incompatible with numpy 2.x build tooling; we use `implicit` for ALS
+
+# ML — deep learning (for Neural Collaborative Filtering — D3)
+torch>=2.2.0
+
+# Evaluation / metrics
+matplotlib>=3.8.0
+seaborn>=0.13.0
+plotly>=5.18.0
+
+# NLP — for TF-IDF on product descriptions
+nltk>=3.8.1
+
+# Deployment
+streamlit>=1.31.0
+
+# Notebooks
+jupyter>=1.0.0
+ipykernel>=6.29.0
+
+# Utilities
+tqdm>=4.66.0
+python-dotenv>=1.0.0
