@@ -201,6 +201,32 @@ def build_cb_profiles(_articles: pd.DataFrame, train: pd.DataFrame, _tfidf):
     return profiles, {u: i for i, u in enumerate(users)}, item_id_to_row
 
 
+@st.cache_resource
+def compute_user_history(_train: pd.DataFrame):
+    seen_by_user = _train.groupby("customer_id")["article_id"].apply(set).to_dict()
+    sample_users = list(seen_by_user.keys())[:200]
+    return seen_by_user, sample_users
+
+
+@st.cache_resource
+def build_dropdown_labels(_articles: pd.DataFrame, _sample_users, _seen_by_user):
+    name_by_id = _articles.set_index("article_id")["prod_name"].to_dict()
+    labels = {}
+    for uid in _sample_users:
+        ids = _seen_by_user.get(uid)
+        first = next(iter(ids), None) if ids else None
+        labels[uid] = name_by_id.get(first, "—") if first else "—"
+    return labels
+
+
+@st.cache_resource
+def als_lookups(_als_user_index, _als_item_index):
+    user_to_row = {u: i for i, u in enumerate(_als_user_index)}
+    item_to_row = {a: i for i, a in enumerate(_als_item_index)}
+    candidate_items = list(_als_item_index)
+    return user_to_row, item_to_row, candidate_items
+
+
 # ---------- recommenders ----------
 
 def recommend_cb(user_id, profiles, user_id_to_row, tfidf, item_id_to_row, articles, seen, k):
@@ -219,14 +245,10 @@ def recommend_cb(user_id, profiles, user_id_to_row, tfidf, item_id_to_row, artic
     return [row_to_item[i] for i in top]
 
 
-def recommend_als(model, user_index, item_index, train, user_id, k):
-    user_id_to_row = {u: i for i, u in enumerate(user_index)}
-    if user_id not in user_id_to_row:
+def recommend_als(model, item_index, user_to_row, item_to_row, seen, user_id, k):
+    if user_id not in user_to_row:
         return None
-    # build a one-row user_item to satisfy implicit.recommend API
-    user_seen = train[train["customer_id"] == user_id]["article_id"]
-    item_id_to_row = {a: i for i, a in enumerate(item_index)}
-    cols = [item_id_to_row[a] for a in user_seen if a in item_id_to_row]
+    cols = [item_to_row[a] for a in seen if a in item_to_row]
     row = csr_matrix(
         (np.ones(len(cols), dtype=np.float32), ([0] * len(cols), cols)),
         shape=(1, len(item_index)),
@@ -236,10 +258,7 @@ def recommend_als(model, user_index, item_index, train, user_id, k):
 
 
 def recommend_hybrid(user_id, alpha, profiles, cb_u_id_to_row, tfidf, item_id_to_row,
-                     als_model, als_user_index, als_item_index, seen, k):
-    als_u_id_to_row = {u: i for i, u in enumerate(als_user_index)}
-    als_i_id_to_row = {a: i for i, a in enumerate(als_item_index)}
-    candidate_items = list(set(als_item_index))
+                     als_model, als_user_to_row, als_item_to_row, candidate_items, seen, k):
     cb_score = np.zeros(len(candidate_items), dtype=np.float32)
     if user_id in cb_u_id_to_row:
         profile = profiles[cb_u_id_to_row[user_id]]
@@ -250,9 +269,9 @@ def recommend_hybrid(user_id, alpha, profiles, cb_u_id_to_row, tfidf, item_id_to
                 sims = (profile @ tfidf[np.array(rows)[mask]].T).toarray().ravel()
                 cb_score[mask] = sims
     cf_score = np.zeros(len(candidate_items), dtype=np.float32)
-    if user_id in als_u_id_to_row:
-        u_fac = als_model.user_factors[als_u_id_to_row[user_id]]
-        rows = [als_i_id_to_row.get(i, -1) for i in candidate_items]
+    if user_id in als_user_to_row:
+        u_fac = als_model.user_factors[als_user_to_row[user_id]]
+        rows = [als_item_to_row.get(i, -1) for i in candidate_items]
         mask = np.array(rows) >= 0
         if mask.any():
             i_fac = als_model.item_factors[np.array(rows)[mask]]
@@ -297,8 +316,9 @@ def main():
             st.error(f"Missing artefact: `{e.filename}`")
             return
 
-    seen_by_user = train.groupby("customer_id")["article_id"].apply(set).to_dict()
-    sample_users = list(seen_by_user.keys())[:200]
+    seen_by_user, sample_users = compute_user_history(train)
+    als_user_to_row, als_item_to_row, candidate_items = als_lookups(als_user_index, als_item_index)
+    first_purchase_lookup = build_dropdown_labels(articles, sample_users, seen_by_user)
 
     # Algorithm chip row + customer picker
     c_alg, c_user, c_k = st.columns([3, 2, 1])
@@ -312,18 +332,6 @@ def main():
         )
     with c_user:
         st.markdown('<div class="field-label">Customer</div>', unsafe_allow_html=True)
-        # Show a brief preview of each customer's top purchase to make picking meaningful
-        first_purchase_lookup = {}
-        for uid in sample_users:
-            seen_ids = list(seen_by_user.get(uid, set()))[:1]
-            if seen_ids:
-                row = articles[articles["article_id"] == seen_ids[0]].head(1)
-                if not row.empty:
-                    first_purchase_lookup[uid] = row.iloc[0].get("prod_name", "—")
-                else:
-                    first_purchase_lookup[uid] = "—"
-            else:
-                first_purchase_lookup[uid] = "—"
         user_id = st.selectbox(
             "Customer",
             sample_users,
@@ -364,12 +372,12 @@ def main():
             recs = recommend_cb(user_id, profiles, cb_u_id_to_row, tfidf, item_id_to_row, articles, seen, k)
             badge = "TF-IDF · Cosine Similarity"
         elif algo.startswith("Collaborative"):
-            recs = recommend_als(als_model, als_user_index, als_item_index, train, user_id, k)
+            recs = recommend_als(als_model, als_item_index, als_user_to_row, als_item_to_row, seen, user_id, k)
             badge = "ALS · Matrix Factorisation"
         else:
             recs = recommend_hybrid(
                 user_id, best_alpha, profiles, cb_u_id_to_row, tfidf, item_id_to_row,
-                als_model, als_user_index, als_item_index, seen, k,
+                als_model, als_user_to_row, als_item_to_row, candidate_items, seen, k,
             )
             badge = f"Hybrid · α = {best_alpha:.2f}"
 
