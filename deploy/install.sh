@@ -78,6 +78,21 @@ server {
 
   client_max_body_size 100M;
 
+  gzip on;
+  gzip_vary on;
+  gzip_proxied any;
+  gzip_min_length 1024;
+  gzip_comp_level 5;
+  gzip_types
+    application/javascript
+    application/json
+    application/xml
+    application/wasm
+    text/css
+    text/plain
+    text/xml
+    image/svg+xml;
+
   location / {
     proxy_pass http://127.0.0.1:8501;
     proxy_http_version 1.1;

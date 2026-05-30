@@ -235,6 +235,88 @@ To design, build and critically evaluate a hybrid product recommendation system 
 
 ---
 
+# Chapter 5b — Platform Implementation: Auth-Gated Product
+
+> **Criteria:** P4, M5, D3 (added at supervisor request — the academic notebooks alone do not satisfy the "real product" scoping of this submission)  ·  **Target:** 800–1,200 words
+
+This chapter documents the deployed multi-user platform built on top of the four notebook-trained models. The decision to deliver an auth-gated product (rather than the original public Streamlit demo) was taken late in the project at the supervisor's direction; this chapter therefore both describes the artefact and reflects critically on the late-stage scope expansion (D2 evidence).
+
+## 5b.1 Scope Decision and Cut List
+
+Eleven days of capacity remained when the scoping conversation took place. A full feature tree was prepared (auth + RBAC + four-rail home + catalogue with search + per-card explicit/implicit feedback + retraining loop + analytics dashboard + admin panel) and explicitly **cut down** to a defensible MVP: register/login/logout (no password reset), customer + admin roles only, two-rail home feed, catalogue with category filter (no full-text search), explicit thumbs feedback (no dwell-time tracking), admin-triggered retraining (no automatic loop), single admin page (no analytics dashboard). The cut list is reproduced verbatim in Appendix K as evidence of explicit scope control, not feature inflation.
+
+## 5b.2 Architecture
+
+The platform is a Streamlit multipage application sharing the notebook-trained model artefacts via `@st.cache_resource` loaders:
+
+- **`app/db.py`** — SQLite at `data/app.db`. Three tables (`users`, `preferences`, `interactions`). All state is derived from the append-only `interactions` log: the current wishlist is `(saves – unsaves – purchases)` replayed; likes / dislikes are similarly derived. This avoids race conditions on toggle state under concurrent reruns and produces a complete audit trail.
+- **`app/auth.py`** — bcrypt-hashed credentials, pure-function design (no Streamlit imports) so the helpers are unit-testable and reusable from CLI seeding scripts.
+- **`app/shared.py`** — all cached loaders, recommenders, and card-rendering helpers. Recommender signatures take **`positives` and `excluded`** as separate sets, so dislikes filter outputs without polluting the ALS fold-in signal.
+- **`app/main.py`** — entry point and home page (two product rails plus a "Compare algorithms" expander that preserves the academic switcher for viva demos).
+- **`app/pages/`** — `1_Catalogue.py`, `2_Wishlist.py` (visible nav), `_product.py`, `_admin.py` (hidden, reached via in-app navigation).
+- **`app/retrain.py`** — refits ALS on a recent slice of H&M transactions plus currently-active platform saves/likes/purchases. Platform users are keyed `"app:<id>"` to avoid collision with H&M customer hashes; platform interactions are weighted 3× to reflect their explicit-feedback character.
+
+## 5b.3 Cold-Start Handling
+
+Newly-signed-up users have no purchase history, which would render both ALS and the content-based profile inert. Two mechanisms address this:
+
+1. **Preference seeding at signup.** Users select at least three product-type categories (e.g. *dress*, *jeans*, *t-shirt*). The first build of their content-based profile is the L2-normalised mean of TF-IDF vectors of up to 80 catalogue exemplars from those categories.
+2. **Online ALS fold-in.** ALS recommendations use `recalculate_user=True` in the `implicit` library, solving a per-request ridge regression for the user's latent factor from whatever positive signal they have so far. Without this flag, the recommender silently uses whichever H&M customer happened to occupy row 0 of the user matrix — a bug caught during the multi-user smoke test.
+
+The "Picked for you" rail is therefore non-empty for fresh accounts (CB profile from preferences seeds the hybrid), while the "Because you saved X" rail is gated on at least one save. The collaborative-filtering-only tab in the compare expander explicitly tells the user it requires at least one save to fold them in — a design choice favouring legibility over silent fallback.
+
+## 5b.4 Explainability
+
+Each recommendation card shows a one-line "Why" caption:
+
+- For content-based and hybrid rails: the top three TF-IDF terms shared between the user profile and the recommended item, computed as element-wise product of the normalised profile and item vectors. Implementation in `shared.explain_cb_for_items`.
+- For the "Because you saved X" rail and the product-detail similar-items grid: a list of shared categorical attributes (`same type, same colour, same section`). Implementation in `shared.explain_similar_to`.
+
+This is the operational version of the "interpretability" theme from the literature review (Chapter 2). It is intentionally lightweight — no LIME or SHAP — but it is on-screen for every recommendation, which a heavyweight explainer at one-second-per-card latency could not afford.
+
+## 5b.5 Feedback Loop
+
+Explicit feedback is captured via mutually-exclusive 👍 / 👎 buttons under every recommendation card. Toggling is implemented as paired event types (`like` / `unlike`, `dislike` / `undislike`); switching from like to dislike emits two events atomically so the derived state is never "both". Dislikes are added to the `excluded` set across all recommenders; the disliked article and its near-neighbours are pushed down on the next rerun, demonstrating the closed feedback loop end-to-end.
+
+Implicit feedback is limited to per-session-deduplicated `view` events when the product-detail page opens. Dwell time is not captured (Streamlit's session model makes accurate measurement infeasible without a JavaScript injection); this is documented as future work in §5.9.
+
+## 5b.6 Retraining Loop
+
+The admin page exposes a "Retrain ALS now" button (`app/retrain.py`). Each invocation:
+
+1. Loads articles for the item index.
+2. Loads a sampled recent H&M transactions window (default: last calendar month, capped at 300 k rows for time-budget compliance).
+3. Reads all currently-active platform saves / likes / purchases from `interactions`.
+4. Builds the combined user-item sparse matrix; fits ALS at the same factor count as the existing bundle.
+5. Overwrites `models/cf_als_model.pkl` and calls `shared.load_cf.clear()` to flush the Streamlit cache.
+
+A full retrain on the project's reference droplet (DigitalOcean 4 GB / 2 vCPU) completes in approximately 25–45 seconds. The button surfaces progress messages and returns a stats dict (users, items, interactions, factors, elapsed). This is the smallest possible artefact that demonstrates a closed retraining loop; a true production system would schedule it (cron / Airflow) rather than running it interactively.
+
+## 5b.7 Security and Privacy
+
+- Passwords are bcrypt-hashed with the library default cost; no plaintext is ever persisted.
+- The auth-screen email validator requires a non-trivial TLD; minimum password length is 8 (configurable via `auth.MIN_PASSWORD_LEN`).
+- Admin actions are gated server-side on `user["role"] == "admin"` — the sidebar "Admin panel" button is only rendered for admins, but the page itself re-checks the role and returns an "access denied" view for non-admins who navigate directly. (Defence-in-depth — not just UI hiding.)
+- SQLite is local to the droplet; no analytics or marketing trackers are loaded. The `interactions` log is per-user and never shared with third parties. See Appendix E (Data Management Plan) for full GDPR mapping.
+
+## 5b.8 Performance Engineering
+
+GTmetrix baseline before platform work: **Grade E** (LCP 5.3s, FCP 4.8s, CLS 0.54). Root causes identified from the HAR: 73 of 74 responses uncompressed (Streamlit's bundled JS = 2.51 MB), and a 0.54 cumulative-layout-shift on the home block container when cached loaders finish. Fixes applied:
+
+- `deploy/install.sh` nginx fragment now enables gzip for `application/javascript`, `text/css`, `application/json`, `application/wasm`, `image/svg+xml` at compression level 5. Verified on the droplet: total transfer drops from 3.06 MB to ≈1.2 MB.
+- `app/shared.py` `.block-container` rule sets `min-height: 920px`, reserving vertical space so the page doesn't reflow when the rec grid populates. Cards have `min-height: 180px`; saved-item rows have `min-height: 56px`.
+
+Re-tested GTmetrix at port 80 (nginx-fronted): see §5.4 of `docs/findings_perf.md` for the updated trace [verify before final submission].
+
+## 5b.9 Honest Limitations
+
+- **Session persistence.** Closing the browser logs the user out — the current implementation does not use signed cookies for session resumption. A cookie-manager bolt-on would be a half-day extension.
+- **No password reset.** Cut for time; an admin-mediated reset workflow is documented in the README.
+- **Search.** Catalogue browse is filter-only, not full-text search. The H&M catalogue has ≈106k items; a real-search implementation would need an inverted index, which is out of scope for this submission.
+- **Retraining is manual.** The "loop" is operator-triggered, not scheduled. In a real e-commerce platform this would run nightly via cron.
+
+---
+
 # Chapter 6 — Conclusion and Recommendations
 
 > **Target:** 500–800 words
@@ -250,7 +332,7 @@ To design, build and critically evaluate a hybrid product recommendation system 
 | O2 — Dataset acquired and pre-processed, EDA notebook | `notebooks/01_eda.ipynb` + `docs/findings_eda.md` | [✓ / partial] |
 | O3 — Four algorithms implemented in Python | `notebooks/02–05` + `models/` artefacts | [✓ / partial] |
 | O4 — Each model evaluated with cross-validation + significance | `notebooks/06_evaluation.ipynb` + `outputs/evaluation/` | [✓ / partial] |
-| O5 — Streamlit demo deployed + 20+ user feedback | `app/main.py` + Streamlit Cloud URL + `outputs/user_feedback/` | [✓ / partial] |
+| O5 — Streamlit demo deployed + 20+ user feedback | `app/main.py` + DigitalOcean droplet + `data/app.db` interactions (replaced the JSONL feedback file with the SQLite interaction log when scope expanded to a real product — see Ch 5b) | [✓ / partial] |
 | O6 — Final report + 12–15 slide presentation | This document + `docs/presentation_outline.md` | [✓ / partial] |
 
 ## 6.3 Contribution to Knowledge and Practice
@@ -299,6 +381,7 @@ To design, build and critically evaluate a hybrid product recommendation system 
 | H — Project Logbook (extracts) | `logbook.md` (chosen entries) | M2 / D2 / D4 evidence |
 | I — Supervisor meeting records | `docs/supervisor_notes/` | M2 evidence |
 | J — Assessment Criteria self-check matrix | end of this report | mapping P/M/D ➜ chapter |
+| K — Platform scope cut list | Day-1 of the build | evidence of explicit scope control (Ch 5b §5b.1) |
 
 ---
 

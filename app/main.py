@@ -1,20 +1,10 @@
-"""H&M Product Recommendation Demo — Streamlit app.
+"""H&M Product Recommendation Platform — entry point.
+
+Auth-gated home page. Catalogue, product detail, and (later) wishlist/admin
+live under app/pages/.
 
 Run from repo root:
     streamlit run app/main.py
-
-Required artefacts (produced by notebooks 02–05):
-    models/content_based_vectorizer.pkl
-    models/content_based_item_tfidf.npz
-    models/cf_als_model.pkl
-    models/hybrid_config.pkl
-    models/ncf_neumf.pt          (optional — NCF tab disabled if missing)
-    models/ncf_id_maps.pkl       (optional)
-
-Required data:
-    data/articles.csv
-    data/customers.csv
-    data/transactions_train.csv
 """
 
 from __future__ import annotations
@@ -25,426 +15,361 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-import pickle
-import json
-
-import numpy as np
-import pandas as pd
 import streamlit as st
-from scipy.sparse import load_npz, csr_matrix, diags
-from sklearn.preprocessing import normalize
 
-from src import data as dataio
-from src import metrics as metricslib
-
-MODEL_DIR = REPO_ROOT / "models"
+from app import auth, db, shared
 
 st.set_page_config(
     page_title="Personalised Recommendations",
-    page_icon=None,
+    page_icon="🛍️",
     layout="wide",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="expanded",
 )
 
-CUSTOM_CSS = """
-<style>
-  /* Reset Streamlit defaults toward an Apple/Yandex-clean look */
-  html, body, [class*="css"]  {
-    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text",
-                 "Helvetica Neue", "Segoe UI", system-ui, sans-serif;
-    color: #1d1d1f;
-    -webkit-font-smoothing: antialiased;
-  }
-  /* Hide Streamlit chrome */
-  #MainMenu, footer, [data-testid="stToolbar"], header[data-testid="stHeader"] { display: none; }
-  /* Tighten container width and centre */
-  .block-container { max-width: 1080px; padding-top: 3rem; padding-bottom: 4rem; }
-  /* Headings */
-  h1 { font-weight: 600; font-size: 40px; letter-spacing: -0.025em; margin-bottom: 0.25rem !important; }
-  h2 { font-weight: 600; font-size: 22px; letter-spacing: -0.01em; margin-top: 2.5rem !important; }
-  h3 { font-weight: 500; font-size: 16px; color: #1d1d1f; margin: 0 !important; }
-  .subtitle { color: #6e6e73; font-size: 17px; margin-bottom: 2.5rem; max-width: 640px; }
-  .pill {
-    display: inline-block; padding: 4px 12px; border-radius: 100px;
-    background: #f5f5f7; color: #1d1d1f; font-size: 13px; font-weight: 500;
-    margin-bottom: 1.5rem;
-  }
-  /* Product cards */
-  .card {
-    background: #ffffff; border: 1px solid #e5e5e7; border-radius: 18px;
-    padding: 20px; margin: 8px 0; transition: all 0.2s ease;
-    height: 100%;
-  }
-  .card:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.06); border-color: #d2d2d7; }
-  .card-rank {
-    display: inline-block; width: 22px; height: 22px; line-height: 22px;
-    background: #1d1d1f; color: #fff; border-radius: 6px; text-align: center;
-    font-size: 12px; font-weight: 600; margin-right: 8px;
-  }
-  .card-title { font-size: 15px; font-weight: 600; color: #1d1d1f; margin: 0; }
-  .card-row { display: flex; justify-content: space-between; margin-top: 6px; font-size: 13px; }
-  .card-key { color: #86868b; }
-  .card-val { color: #1d1d1f; font-weight: 500; }
-  .card-id { color: #86868b; font-size: 11px; font-family: ui-monospace, SFMono-Regular, monospace; margin-top: 8px; }
-  /* Compact purchase-history row */
-  .history-row {
-    display: flex; align-items: center; padding: 10px 14px; border-radius: 10px;
-    background: #f5f5f7; margin-bottom: 6px;
-  }
-  .history-name { font-size: 14px; font-weight: 500; }
-  .history-meta { color: #86868b; font-size: 12px; margin-top: 2px; }
-  /* Customer dropdown styling */
-  [data-baseweb="select"] > div { border-radius: 10px !important; border: 1px solid #d2d2d7 !important; }
-  /* Section divider */
-  .divider { border-top: 1px solid #e5e5e7; margin: 3rem 0 2rem; }
-  .muted { color: #86868b; font-size: 13px; }
-  /* Algorithm tabs — iOS-style segmented control */
-  div[role="radiogroup"] {
-    display: flex !important;
-    flex-direction: row !important;
-    flex-wrap: nowrap !important;
-    gap: 6px !important;
-    background: #f5f5f7;
-    padding: 4px;
-    border-radius: 12px;
-    width: fit-content;
-  }
-  div[role="radiogroup"] > label {
-    padding: 6px 14px !important;
-    border-radius: 8px !important;
-    font-size: 14px !important;
-    font-weight: 500 !important;
-    white-space: nowrap !important;
-    cursor: pointer;
-    color: #6e6e73;
-    transition: all 0.15s ease;
-  }
-  div[role="radiogroup"] > label:hover { color: #1d1d1f; }
-  /* Active chip: filled white card with shadow (selected has aria-checked=true) */
-  div[role="radiogroup"] > label[data-baseweb="radio"]:has(input:checked) {
-    background: #ffffff !important;
-    color: #1d1d1f !important;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-  }
-  /* Hide native radio circle — chip itself is the indicator */
-  div[role="radiogroup"] > label > div:first-child { display: none !important; }
-  /* Form label styling */
-  .field-label {
-    font-size: 12px; font-weight: 500; color: #6e6e73;
-    text-transform: uppercase; letter-spacing: 0.04em;
-    margin-bottom: 6px;
-  }
-</style>
-"""
 
-TEXT_COLS = [
-    "prod_name", "detail_desc", "product_type_name",
-    "product_group_name", "colour_group_name",
-    "department_name", "index_group_name",
-]
+# ---------- auth screen (rendered when not logged in) ----------
 
-
-# ---------- loaders (cached) ----------
-
-@st.cache_resource
-def load_data(sample_n: int = 1_000_000):
-    articles = dataio.load_articles()
-    transactions = dataio.load_transactions(nrows=sample_n)
-    train, _ = dataio.time_based_split(transactions, cutoff_days=7)
-    return articles, train
-
-
-@st.cache_resource
-def load_content_based():
-    with open(MODEL_DIR / "content_based_vectorizer.pkl", "rb") as f:
-        vec = pickle.load(f)
-    tfidf = load_npz(MODEL_DIR / "content_based_item_tfidf.npz")
-    return vec, tfidf
-
-
-@st.cache_resource
-def load_cf():
-    with open(MODEL_DIR / "cf_als_model.pkl", "rb") as f:
-        bundle = pickle.load(f)
-    return bundle["model"], bundle["user_index"], bundle["item_index"]
-
-
-@st.cache_resource
-def load_hybrid_config():
-    path = MODEL_DIR / "hybrid_config.pkl"
-    if not path.exists():
+def _on_login(email, password):
+    try:
+        user = auth.authenticate(email, password)
+        st.session_state["user"] = user
         return None
-    with open(path, "rb") as f:
-        return pickle.load(f)
+    except auth.LockedError as e:
+        return f"🔒 {e}"
+    except auth.AuthError as e:
+        # Show remaining-attempts hint so legitimate users don't trip the lockout blind
+        n_failed = db.failed_attempts_in_window(email)
+        remaining = max(0, auth.MAX_FAILED_ATTEMPTS - n_failed)
+        if 0 < remaining < auth.MAX_FAILED_ATTEMPTS:
+            return f"{e}  ({remaining} attempt{'s' if remaining != 1 else ''} remaining before lockout.)"
+        return str(e)
 
 
-@st.cache_resource
-def build_cb_profiles(_articles: pd.DataFrame, train: pd.DataFrame, _tfidf):
-    """Build content-based user profiles. Underscored args skip Streamlit hashing."""
-    cols = [c for c in TEXT_COLS if c in _articles.columns]
-    corpus_df = _articles[["article_id"] + cols].copy().fillna("")
-    item_id_to_row = {a: i for i, a in enumerate(corpus_df["article_id"].values)}
-    df = train.copy()
-    df["item_row"] = df["article_id"].map(item_id_to_row)
-    df = df.dropna(subset=["item_row"])
-    df["item_row"] = df["item_row"].astype(int)
-    users = pd.Index(df["customer_id"].unique())
-    user_pos = users.get_indexer(df["customer_id"])
-    counts = np.bincount(user_pos, minlength=len(users)).astype(np.float32)
-    counts[counts == 0] = 1
-    sel = csr_matrix(
-        (np.ones(len(df), dtype=np.float32), (user_pos, df["item_row"].values)),
-        shape=(len(users), _tfidf.shape[0]),
-    )
-    profiles = diags(1.0 / counts) @ (sel @ _tfidf)
-    profiles = normalize(profiles, norm="l2", axis=1)
-    return profiles, {u: i for i, u in enumerate(users)}, item_id_to_row
-
-
-@st.cache_resource
-def compute_user_history(_train: pd.DataFrame):
-    seen_by_user = _train.groupby("customer_id")["article_id"].apply(set).to_dict()
-    sample_users = list(seen_by_user.keys())[:200]
-    return seen_by_user, sample_users
-
-
-@st.cache_resource
-def build_dropdown_labels(_articles: pd.DataFrame, _sample_users, _seen_by_user):
-    name_by_id = _articles.set_index("article_id")["prod_name"].to_dict()
-    labels = {}
-    for uid in _sample_users:
-        ids = _seen_by_user.get(uid)
-        first = next(iter(ids), None) if ids else None
-        labels[uid] = name_by_id.get(first, "—") if first else "—"
-    return labels
-
-
-@st.cache_resource
-def als_lookups(_als_user_index, _als_item_index):
-    user_to_row = {u: i for i, u in enumerate(_als_user_index)}
-    item_to_row = {a: i for i, a in enumerate(_als_item_index)}
-    candidate_items = list(_als_item_index)
-    return user_to_row, item_to_row, candidate_items
-
-
-# ---------- recommenders ----------
-
-def recommend_cb(user_id, profiles, user_id_to_row, tfidf, item_id_to_row, articles, seen, k):
-    if user_id not in user_id_to_row:
+def _on_signup(email, password, display_name, prefs):
+    if len(prefs) < 3:
+        return "Please pick at least 3 categories so we can personalise your feed."
+    try:
+        user = auth.register(email, password, display_name)
+        auth.set_preferences(user["id"], prefs)
+        st.session_state["user"] = user
         return None
-    profile = profiles[user_id_to_row[user_id]]
-    if profile.nnz == 0:
-        return None
-    scores = (profile @ tfidf.T).toarray().ravel()
-    if seen:
-        seen_rows = [item_id_to_row[a] for a in seen if a in item_id_to_row]
-        scores[seen_rows] = -np.inf
-    top = np.argpartition(-scores, k)[:k]
-    top = top[np.argsort(-scores[top])]
-    row_to_item = {v: kk for kk, v in item_id_to_row.items()}
-    return [row_to_item[i] for i in top]
+    except auth.AuthError as e:
+        return str(e)
 
 
-def recommend_als(model, item_index, user_to_row, item_to_row, seen, user_id, k):
-    if user_id not in user_to_row:
-        return None
-    cols = [item_to_row[a] for a in seen if a in item_to_row]
-    row = csr_matrix(
-        (np.ones(len(cols), dtype=np.float32), ([0] * len(cols), cols)),
-        shape=(1, len(item_index)),
-    )
-    item_rows, _ = model.recommend(0, row, N=k, filter_already_liked_items=True)
-    return [item_index[i] for i in item_rows]
+def render_auth_screen():
+    shared.apply_css()
+    shared.hide_sidebar()  # pre-login: no nav, focus on the form
 
-
-def recommend_hybrid(user_id, alpha, profiles, cb_u_id_to_row, tfidf, item_id_to_row,
-                     als_model, als_user_to_row, als_item_to_row, candidate_items, seen, k):
-    cb_score = np.zeros(len(candidate_items), dtype=np.float32)
-    if user_id in cb_u_id_to_row:
-        profile = profiles[cb_u_id_to_row[user_id]]
-        if profile.nnz > 0:
-            rows = [item_id_to_row.get(i, -1) for i in candidate_items]
-            mask = np.array(rows) >= 0
-            if mask.any():
-                sims = (profile @ tfidf[np.array(rows)[mask]].T).toarray().ravel()
-                cb_score[mask] = sims
-    cf_score = np.zeros(len(candidate_items), dtype=np.float32)
-    if user_id in als_user_to_row:
-        u_fac = als_model.user_factors[als_user_to_row[user_id]]
-        rows = [als_item_to_row.get(i, -1) for i in candidate_items]
-        mask = np.array(rows) >= 0
-        if mask.any():
-            i_fac = als_model.item_factors[np.array(rows)[mask]]
-            cf_score[mask] = i_fac @ u_fac
-
-    def minmax(x):
-        lo, hi = x.min(), x.max()
-        return np.zeros_like(x) if hi - lo < 1e-12 else (x - lo) / (hi - lo)
-
-    combined = alpha * minmax(cb_score) + (1 - alpha) * minmax(cf_score)
-    if seen:
-        mask = np.array([1.0 if i in seen else 0.0 for i in candidate_items])
-        combined = np.where(mask > 0, -np.inf, combined)
-    arr = np.array(candidate_items)
-    top = np.argpartition(-combined, k)[:k]
-    top = top[np.argsort(-combined[top])]
-    return arr[top].tolist()
-
-
-# ---------- UI ----------
-
-def main():
-    st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
-
-    # Hero
-    st.markdown('<div class="pill">Personalised Recommendations</div>', unsafe_allow_html=True)
-    st.markdown("<h1>Built to learn what you actually wear.</h1>", unsafe_allow_html=True)
+    st.markdown('<div class="pill">🛍️  Personalised Recommendations</div>', unsafe_allow_html=True)
+    st.markdown("<h1 class='hero-headline'>Built to learn what you actually wear.</h1>", unsafe_allow_html=True)
     st.markdown(
-        '<p class="subtitle">Three recommendation algorithms running live on the H&amp;M catalogue. Pick a customer to see what each model would suggest next.</p>',
+        '<p class="subtitle">Log in or create an account to get recommendations from four learned '
+        'models — content-based, collaborative filtering, hybrid, and neural — tuned to your saved '
+        'items and preferences.</p>',
         unsafe_allow_html=True,
     )
 
-    with st.spinner("Loading models…"):
-        try:
-            articles, train = load_data(sample_n=1_000_000)
-            vec, tfidf = load_content_based()
-            als_model, als_user_index, als_item_index = load_cf()
-            hybrid_cfg = load_hybrid_config()
-            best_alpha = hybrid_cfg["best_alpha"] if hybrid_cfg else 0.5
-            profiles, cb_u_id_to_row, item_id_to_row = build_cb_profiles(articles, train, tfidf)
-        except FileNotFoundError as e:
-            st.error(f"Missing artefact: `{e.filename}`")
-            return
+    tab_login, tab_signup = st.tabs(["Log in", "Create account"])
 
-    seen_by_user, sample_users = compute_user_history(train)
-    als_user_to_row, als_item_to_row, candidate_items = als_lookups(als_user_index, als_item_index)
-    first_purchase_lookup = build_dropdown_labels(articles, sample_users, seen_by_user)
+    with tab_login:
+        with st.form("login_form", clear_on_submit=False):
+            email = st.text_input("Email", key="login_email")
+            password = st.text_input("Password", type="password", key="login_password")
+            submitted = st.form_submit_button("Log in", type="primary", use_container_width=True)
+        if submitted:
+            err = _on_login(email, password)
+            if err:
+                st.error(err)
+            else:
+                st.rerun()
 
-    # Algorithm chip row + customer picker
-    c_alg, c_user, c_k = st.columns([3, 2, 1])
-    with c_alg:
-        st.markdown('<div class="field-label">Algorithm</div>', unsafe_allow_html=True)
-        algo = st.radio(
-            "Algorithm",
-            ["Hybrid", "Content-Based", "Collaborative Filtering"],
-            horizontal=True,
-            label_visibility="collapsed",
-        )
-    with c_user:
-        st.markdown('<div class="field-label">Customer</div>', unsafe_allow_html=True)
-        user_id = st.selectbox(
-            "Customer",
-            sample_users,
-            format_func=lambda u: f"{u[:6]}… · bought {first_purchase_lookup.get(u, '—')}",
-            label_visibility="collapsed",
-        )
-    with c_k:
-        st.markdown('<div class="field-label">Show</div>', unsafe_allow_html=True)
-        k = st.selectbox(
-            "Recommendations",
-            [10, 15, 20],
-            index=0,
-            format_func=lambda n: f"{n} items",
-            label_visibility="collapsed",
-        )
-
-    seen = seen_by_user.get(user_id, set())
-
-    # Two-column body: history left, recommendations right
-    col_hist, col_recs = st.columns([1, 2], gap="large")
-
-    with col_hist:
-        st.markdown("<h2>Purchase history</h2>", unsafe_allow_html=True)
-        st.markdown(f'<p class="muted">{len(seen)} items in the training window</p>', unsafe_allow_html=True)
-        recent = articles[articles["article_id"].isin(list(seen)[:6])]
-        for _, item in recent.head(6).iterrows():
-            st.markdown(
-                f'<div class="history-row">'
-                f'<div><div class="history-name">{item.get("prod_name", "—")}</div>'
-                f'<div class="history-meta">{item.get("product_type_name", "")} · {item.get("colour_group_name", "")}</div></div>'
-                f'</div>',
-                unsafe_allow_html=True,
+    with tab_signup:
+        articles = shared.load_articles()
+        categories = sorted({c for c in articles["product_type_name"].dropna() if c})
+        with st.form("signup_form", clear_on_submit=False):
+            email = st.text_input("Email", key="signup_email")
+            password = st.text_input(
+                "Password", type="password", key="signup_password",
+                help=f"At least {auth.MIN_PASSWORD_LEN} characters",
             )
+            display_name = st.text_input("Display name", key="signup_name")
+            prefs = st.multiselect(
+                "What kinds of items interest you? (pick at least 3)",
+                categories,
+                key="signup_prefs",
+            )
+            submitted = st.form_submit_button("Create account", type="primary", use_container_width=True)
+        if submitted:
+            err = _on_signup(email, password, display_name, prefs)
+            if err:
+                st.error(err)
+            else:
+                st.rerun()
 
-    with col_recs:
-        st.markdown("<h2>Recommended for this customer</h2>", unsafe_allow_html=True)
-        if algo.startswith("Content"):
-            recs = recommend_cb(user_id, profiles, cb_u_id_to_row, tfidf, item_id_to_row, articles, seen, k)
-            badge = "TF-IDF · Cosine Similarity"
-        elif algo.startswith("Collaborative"):
-            recs = recommend_als(als_model, als_item_index, als_user_to_row, als_item_to_row, seen, user_id, k)
-            badge = "ALS · Matrix Factorisation"
+
+# ---------- home (logged-in) ----------
+
+RAIL_SIZE = 6   # items per rail (3 columns x 2 rows)
+POOL_MULT = 4   # request POOL_MULT × RAIL_SIZE candidates so MMR can diversify
+LAMBDA_MMR = 0.7  # 1.0 = pure relevance; 0.0 = pure diversity
+
+
+def render_home(user):
+    shared.apply_css()
+    shared.render_sidebar(user)
+
+    st.markdown(
+        f'<div class="pill">Welcome back, {user["display_name"]}</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown("<h1>Recommended for you.</h1>", unsafe_allow_html=True)
+    st.markdown(
+        '<p class="subtitle">Personalised rails powered by content-based, collaborative-filtering, '
+        'and hybrid models — shaped by your saved items and preferences.</p>',
+        unsafe_allow_html=True,
+    )
+
+    try:
+        articles = shared.load_articles()
+        vectorizer, tfidf = shared.load_content_based()
+        als_model, _, als_item_index = shared.load_cf()
+        hybrid_cfg = shared.load_hybrid_config()
+        best_alpha = hybrid_cfg["best_alpha"] if hybrid_cfg else 0.5
+    except FileNotFoundError as e:
+        st.error(f"Missing artefact: `{e.filename}`")
+        return
+
+    item_id_to_row = shared.build_item_id_to_row(articles)
+    als_item_to_row, candidate_items = shared.als_lookups(als_item_index)
+
+    # Single DB call replaces 3 separate connections.
+    state = db.user_state(user["id"])
+    saved = state["saved"]
+    liked = state["liked"]
+    disliked = state["disliked"]
+    preferences = auth.get_preferences(user["id"])
+    saved_set = set(saved)
+    excluded = saved_set | disliked  # don't recommend saved-or-disliked
+
+    mmr_on = bool(st.session_state.get("mmr_enabled", True))
+    # When MMR is on we ask each recommender for POOL_MULT × RAIL_SIZE
+    # candidates and let MMR thin them down to RAIL_SIZE. When off, we just ask
+    # for the exact rail size and skip the re-rank.
+    pool_size = RAIL_SIZE * (POOL_MULT if mmr_on else 1)
+
+    def _apply_mmr(recs):
+        if not mmr_on or not recs:
+            return list(recs or [])[:RAIL_SIZE]
+        return shared.mmr_rerank(
+            recs, tfidf, item_id_to_row, k=RAIL_SIZE, lambda_param=LAMBDA_MMR,
+        )
+
+    # Session-state memoization keyed on (user_id, interactions sig, alpha, mmr_on).
+    cache_key = ("home_rails_v3", user["id"], state["signature"], best_alpha, RAIL_SIZE, mmr_on)
+    cached = st.session_state.get("rail_cache")
+    if cached and cached.get("key") == cache_key:
+        picked_recs = cached["picked_recs"]
+        rail1_reasons = cached["rail1_reasons"]
+        latest_similar = cached["latest_similar"]
+        customers_recs = cached["customers_recs"]
+        customers_reasons = cached["customers_reasons"]
+        trending_recs = cached["trending_recs"]
+        trending_reasons = cached["trending_reasons"]
+        new_arrivals_recs = cached["new_arrivals_recs"]
+        new_arrivals_reasons = cached["new_arrivals_reasons"]
+        rail_ild = cached["rail_ild"]
+        profile = cached["profile"]
+    else:
+        profile = shared.build_user_profile(saved, preferences, articles, tfidf, item_id_to_row)
+        # Picked-for-you: hybrid, MMR re-ranked → hybrid-style "both models agree" reason
+        hybrid_pool = shared.recommend_hybrid(
+            profile, tfidf, item_id_to_row,
+            als_model, als_item_index, als_item_to_row,
+            candidate_items, saved_set, excluded, best_alpha, pool_size,
+        ) or []
+        picked_recs = _apply_mmr(hybrid_pool)
+        picked_ids = [a for a, _ in picked_recs]
+        rail1_reasons = shared.explain_hybrid_for_items(
+            profile, picked_ids, tfidf, item_id_to_row, vectorizer, best_alpha,
+        )
+        # Because-you-saved-X: CB similar items
+        if saved:
+            latest_aid = saved[-1]
+            sim_pool = shared.recommend_similar(
+                latest_aid, tfidf, item_id_to_row, k=pool_size, exclude=excluded,
+            ) or []
+            similar_recs = _apply_mmr(sim_pool)
+            latest_similar = {"aid": latest_aid, "recs": similar_recs}
         else:
-            recs = recommend_hybrid(
-                user_id, best_alpha, profiles, cb_u_id_to_row, tfidf, item_id_to_row,
-                als_model, als_user_to_row, als_item_to_row, candidate_items, seen, k,
-            )
-            badge = f"Hybrid · α = {best_alpha:.2f}"
+            latest_similar = None
+        # Customers like you also liked: pure ALS
+        cust_pool = shared.recommend_customers_like_you(
+            als_model, als_item_index, als_item_to_row,
+            saved_set, excluded, k=pool_size,
+        )
+        customers_recs = _apply_mmr(cust_pool)
+        # Trending: pure popularity
+        trend_pool = shared.recommend_trending(excluded, k=pool_size)
+        trending_recs = _apply_mmr(trend_pool)
+        # New arrivals: recency-filtered by preferences
+        new_pool = shared.recommend_new_arrivals(articles, preferences, excluded, k=pool_size)
+        new_arrivals_recs = _apply_mmr(new_pool)
 
-        st.markdown(f'<p class="muted">{badge}</p>', unsafe_allow_html=True)
-
-        if not recs:
-            st.markdown('<div class="card"><p class="muted">Cold-start: not enough history to personalise.</p></div>', unsafe_allow_html=True)
-            return
-
-        rec_df = articles[articles["article_id"].isin(recs)].copy()
-        rec_df["rank"] = rec_df["article_id"].map({a: i + 1 for i, a in enumerate(recs)})
-        rec_df = rec_df.sort_values("rank")
-
-        for i in range(0, len(rec_df), 2):
-            row_cols = st.columns(2, gap="small")
-            for col, (_, item) in zip(row_cols, rec_df.iloc[i: i + 2].iterrows()):
-                with col:
-                    st.markdown(
-                        f'<div class="card">'
-                        f'<p class="card-title"><span class="card-rank">{int(item["rank"])}</span>{item.get("prod_name", "—")}</p>'
-                        f'<div class="card-row"><span class="card-key">Type</span><span class="card-val">{item.get("product_type_name", "—")}</span></div>'
-                        f'<div class="card-row"><span class="card-key">Colour</span><span class="card-val">{item.get("colour_group_name", "—")}</span></div>'
-                        f'<div class="card-row"><span class="card-key">Section</span><span class="card-val">{item.get("section_name", "—")}</span></div>'
-                        f'<p class="card-id">{item["article_id"]}</p>'
-                        f'</div>',
-                        unsafe_allow_html=True,
-                    )
-
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-    with st.expander("About this demo"):
-        st.markdown(
-            """
-            **Algorithms.** Three live models on H&M Personalized Fashion Recommendations.
-
-            - **Content-Based** — TF-IDF on product metadata + cosine similarity.
-            - **Collaborative Filtering** — Alternating Least Squares on implicit feedback (Hu, Koren and Volinsky, 2008).
-            - **Hybrid** — Weighted ensemble (α = 0.5) of the two above, with popularity fallback for cold users.
-
-            **Dataset.** H&M Personalized Fashion Recommendations (Kaggle, 2022). Anonymised customer IDs only — no PII.
-
-            **Feedback.** Anonymous and aggregated, used to evaluate recommendation quality.
-            """
+        # Per-rail explanation maps (rail-appropriate framing per supervisor §3.5)
+        customers_reasons = shared.explain_cf_for_items([a for a, _ in customers_recs])
+        trending_reasons = shared.explain_trending(
+            [a for a, _ in trending_recs], shared.load_trending(),
+        )
+        new_arrivals_reasons = shared.explain_new_arrivals(
+            [a for a, _ in new_arrivals_recs], preferences,
         )
 
-    with st.expander("Submit feedback"):
-        relevance = st.slider("How relevant are these recommendations?", 1, 5, 3)
-        diversity = st.slider("How diverse are they?", 1, 5, 3)
-        surprise = st.slider("Did any pleasantly surprise you?", 1, 5, 3)
-        notes = st.text_area("Any free-text feedback?")
-        if st.button("Submit feedback"):
-            from datetime import datetime
-            feedback_path = REPO_ROOT / "outputs" / "user_feedback"
-            feedback_path.mkdir(parents=True, exist_ok=True)
-            entry = {
-                "timestamp": datetime.utcnow().isoformat(),
-                "algorithm": algo,
-                "k": k,
-                "user_id": str(user_id),
-                "relevance": relevance,
-                "diversity": diversity,
-                "surprise": surprise,
-                "notes": notes,
-            }
-            with open(feedback_path / "feedback.jsonl", "a") as f:
-                f.write(json.dumps(entry) + "\n")
-            st.success("Thank you — your anonymous feedback was recorded.")
+        # ILD score per rail — measured on the *post-MMR* list (what the user sees)
+        rail_ild = {
+            "picked":   shared.intra_list_diversity(picked_recs, tfidf, item_id_to_row),
+            "similar":  (shared.intra_list_diversity(latest_similar["recs"], tfidf, item_id_to_row)
+                         if latest_similar else 0.0),
+            "customers": shared.intra_list_diversity(customers_recs, tfidf, item_id_to_row),
+            "trending":  shared.intra_list_diversity(trending_recs, tfidf, item_id_to_row),
+            "new":       shared.intra_list_diversity(new_arrivals_recs, tfidf, item_id_to_row),
+        }
+
+        st.session_state["rail_cache"] = {
+            "key": cache_key,
+            "picked_recs": picked_recs,
+            "rail1_reasons": rail1_reasons,
+            "latest_similar": latest_similar,
+            "customers_recs": customers_recs,
+            "customers_reasons": customers_reasons,
+            "trending_recs": trending_recs,
+            "trending_reasons": trending_reasons,
+            "new_arrivals_recs": new_arrivals_recs,
+            "new_arrivals_reasons": new_arrivals_reasons,
+            "rail_ild": rail_ild,
+            "profile": profile,
+        }
+
+    # Prefetch images for everything that will be rendered, in parallel. The
+    # disk cache is shared across users so successive page loads are instant
+    # for any article that's been displayed before.
+    prefetch_items = []
+    seen_aids = set()
+    def _collect(rec_list):
+        for entry in rec_list or []:
+            aid = entry[0] if isinstance(entry, tuple) else entry
+            if aid in seen_aids:
+                continue
+            seen_aids.add(aid)
+            row = articles[articles["article_id"] == aid]
+            if not row.empty:
+                prefetch_items.append(row.iloc[0].to_dict())
+    _collect(picked_recs)
+    if latest_similar:
+        _collect(latest_similar.get("recs"))
+    _collect(customers_recs)
+    _collect(trending_recs)
+    _collect(new_arrivals_recs)
+    if prefetch_items:
+        with st.spinner(f"Fetching product images ({len(prefetch_items)} items)…"):
+            shared.prefetch_images_sync(prefetch_items, timeout=14.0)
+
+    def _ild_suffix(score: float) -> str:
+        if not mmr_on:
+            return f" · ILD {score:.2f} (no MMR)"
+        return f" · ILD {score:.2f} · MMR λ={LAMBDA_MMR}"
+
+    # ---------- Rail 1: Picked for you (Hybrid) ----------
+    if saved:
+        rail1_caption = (
+            f"Hybrid · {len(saved)} saved item{'s' if len(saved) != 1 else ''} shape this rail · "
+            f"α = {best_alpha:.2f}"
+        )
+    elif preferences:
+        prefs_str = ", ".join(preferences[:3]) + ("…" if len(preferences) > 3 else "")
+        rail1_caption = f"Seeded from your preferences: {prefs_str}"
+    else:
+        rail1_caption = "Cold start — pick preferences or save items to personalise."
+    rail1_caption += _ild_suffix(rail_ild["picked"])
+    shared.render_rail(
+        "Picked for you", rail1_caption, picked_recs, articles,
+        key_prefix="rail_picked", user_id=user["id"],
+        saved_set=saved_set, liked_set=liked, disliked_set=disliked,
+        reasons=rail1_reasons,
+    )
+
+    # ---------- Rail 2: Because you saved X (Content-Based) ----------
+    if latest_similar:
+        latest_aid = latest_similar["aid"]
+        latest_row = articles[articles["article_id"] == latest_aid]
+        latest_name = latest_row.iloc[0]["prod_name"] if not latest_row.empty else latest_aid
+        similar_recs = latest_similar["recs"]
+        similar_ids = [a for a, _ in similar_recs]
+        rail2_reasons = shared.explain_similar_to(latest_aid, similar_ids, articles)
+        shared.render_rail(
+            f"Because you saved {latest_name}",
+            "Content-based · TF-IDF cosine on product metadata"
+            + _ild_suffix(rail_ild["similar"]),
+            similar_recs, articles,
+            key_prefix=f"rail_similar_{latest_aid}",
+            user_id=user["id"], saved_set=saved_set,
+            liked_set=liked, disliked_set=disliked,
+            reasons=rail2_reasons,
+        )
+
+    # ---------- Rail 3: Customers like you also liked (pure ALS / CF) ----------
+    if saved_set:
+        shared.render_rail(
+            "Customers like you also liked",
+            "Collaborative filtering · ALS latent-factor neighbours of your saved items"
+            + _ild_suffix(rail_ild["customers"]),
+            customers_recs, articles,
+            key_prefix="rail_customers",
+            user_id=user["id"], saved_set=saved_set,
+            liked_set=liked, disliked_set=disliked,
+            reasons=customers_reasons,
+        )
+
+    # ---------- Rail 4: Trending this week (popularity) ----------
+    shared.render_rail(
+        "Trending this week",
+        "Most-purchased items across the catalogue" + _ild_suffix(rail_ild["trending"]),
+        trending_recs, articles,
+        key_prefix="rail_trending",
+        user_id=user["id"], saved_set=saved_set,
+        liked_set=liked, disliked_set=disliked,
+        reasons=trending_reasons,
+    )
+
+    # ---------- Rail 5: New arrivals in your style ----------
+    if preferences:
+        new_caption = f"Newest arrivals in your preferred categories: {', '.join(preferences[:3])}"
+    else:
+        new_caption = "Latest catalogue additions — pick preferences in your profile to refine"
+    new_caption += _ild_suffix(rail_ild["new"])
+    shared.render_rail(
+        "New arrivals in your style",
+        new_caption,
+        new_arrivals_recs, articles,
+        key_prefix="rail_new",
+        user_id=user["id"], saved_set=saved_set,
+        liked_set=liked, disliked_set=disliked,
+        reasons=new_arrivals_reasons,
+    )
+
+    # The old "Compare algorithms (research view)" expander has been promoted to
+    # a dedicated page at `app/pages/4_Compare.py` — see the sidebar nav for
+    # the parallel-columns view with the live α slider.
 
 
-if __name__ == "__main__":
-    main()
+def main():
+    db.init_db()
+    shared.check_session_timeout()
+    user = st.session_state.get("user")
+    if user is None:
+        render_auth_screen()
+    else:
+        render_home(user)
+
+
+main()
