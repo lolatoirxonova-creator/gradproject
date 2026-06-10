@@ -61,6 +61,19 @@ CREATE TABLE IF NOT EXISTS login_attempts (
 );
 CREATE INDEX IF NOT EXISTS idx_login_attempts_email
     ON login_attempts(email, created_at DESC);
+
+-- Server-side sessions for persistent ("remember me") login. The browser
+-- holds only an opaque random token in a cookie; the authoritative mapping
+-- token -> user lives here so we can revoke and expire centrally. Token is a
+-- 256-bit urlsafe secret (see auth.new_session_token).
+CREATE TABLE IF NOT EXISTS sessions (
+    token       TEXT    PRIMARY KEY,
+    user_id     INTEGER NOT NULL,
+    created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+    expires_at  TEXT    NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 """
 
 
@@ -157,6 +170,66 @@ def init_db() -> None:
                     DROP TABLE {table}_broken_fk;
                 """)
                 conn.commit()
+
+    purge_expired_sessions()
+
+
+def create_session(token: str, user_id: int, ttl_days: int = 30) -> None:
+    """Persist a session token so the user stays logged in across refreshes."""
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO sessions(token, user_id, expires_at) "
+            "VALUES (?, ?, datetime('now', ?))",
+            (token, user_id, f"+{int(ttl_days)} days"),
+        )
+        conn.commit()
+
+
+def get_session_user(token: str) -> dict | None:
+    """Return the user dict for a non-expired session token, else None.
+
+    Lazily deletes the row if it has expired so stale tokens don't linger.
+    """
+    if not token:
+        return None
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT u.id, u.email, u.display_name, u.role, s.expires_at "
+            "FROM sessions s JOIN users u ON u.id = s.user_id "
+            "WHERE s.token = ?",
+            (token,),
+        ).fetchone()
+        if row is None:
+            return None
+        expired = conn.execute(
+            "SELECT datetime('now') > ? AS expired", (row["expires_at"],)
+        ).fetchone()["expired"]
+        if expired:
+            conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
+            conn.commit()
+            return None
+    return {
+        "id": row["id"],
+        "email": row["email"],
+        "display_name": row["display_name"],
+        "role": row["role"],
+    }
+
+
+def delete_session(token: str) -> None:
+    """Revoke a single session token (used on logout)."""
+    if not token:
+        return
+    with get_conn() as conn:
+        conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
+        conn.commit()
+
+
+def purge_expired_sessions() -> None:
+    """Housekeeping — drop expired session rows. Cheap; called at init_db()."""
+    with get_conn() as conn:
+        conn.execute("DELETE FROM sessions WHERE datetime('now') > expires_at")
+        conn.commit()
 
 
 def record_login_attempt(email: str, success: bool,

@@ -16,12 +16,188 @@ import streamlit as st
 from scipy.sparse import csr_matrix, load_npz
 from sklearn.preprocessing import normalize
 
-from app import db
+from app import auth, db
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MODEL_DIR = REPO_ROOT / "models"
 IMAGE_DIR = REPO_ROOT / "data" / "images"
 IMAGE_CACHE_DIR = REPO_ROOT / "data" / "image_cache"
+ASSETS_DIR = REPO_ROOT / "app" / "assets"
+
+
+@st.cache_data(show_spinner=False)
+def curated_ids() -> list[str]:
+    """Ordered list of the 50 curated demo article IDs (app/assets/curated_products.csv).
+
+    Empty list ⇒ no curation (app falls back to the full catalogue). The visible
+    catalogue, home rails, and recommendation candidate pools are gated to these
+    IDs; the full articles df is still loaded for TF-IDF row alignment.
+    """
+    p = ASSETS_DIR / "curated_products.csv"
+    if not p.exists():
+        return []
+    return pd.read_csv(p, dtype={"article_id": str})["article_id"].tolist()
+
+
+def curated_set() -> set:
+    return set(curated_ids())
+
+
+def render_brand() -> None:
+    """Project logo in the sidebar's top-left (above the nav) via st.logo.
+
+    Full wordmark when the sidebar is expanded; mark-only when collapsed.
+    Swap app/assets/logo.svg to rebrand — change the <text> to rename it.
+    """
+    st.logo(
+        str(ASSETS_DIR / "logo.svg"),
+        size="large",
+        icon_image=str(ASSETS_DIR / "logo_icon.svg"),
+    )
+
+
+@st.cache_data(show_spinner=False)
+def _login_art_data_uri() -> str:
+    """Base64 the login art so CSS can use it without static file serving.
+
+    Prefers a raster photo (app/assets/login_hero.jpg) if present; otherwise uses
+    the minimalist vector illustration (login_art.svg). Drop a JPG/PNG in to swap.
+    """
+    import base64
+    jpg = ASSETS_DIR / "login_hero.jpg"
+    if jpg.exists():
+        return "data:image/jpeg;base64," + base64.b64encode(jpg.read_bytes()).decode()
+    svg = ASSETS_DIR / "login_art.svg"
+    if svg.exists():
+        return "data:image/svg+xml;base64," + base64.b64encode(svg.read_bytes()).decode()
+    return ""
+
+
+def render_auth_panel() -> None:
+    """Split-screen auth: editorial form hard-left, minimalist art panel hard-right.
+    Only injected while logged out, so this CSS is scoped to the auth page.
+    Swap the visual by dropping app/assets/login_hero.jpg (takes priority) or
+    editing app/assets/login_art.svg.
+    """
+    uri = _login_art_data_uri()
+    bg = (f"url('{uri}')" if uri
+          else "radial-gradient(135% 120% at 75% 12%, #ff6a4d 0%, #e8462a 48%, #c5391d 100%)")
+    st.markdown(
+        f"""
+<style>
+  /* Pin the form/hero to a left column. stMain is a flex COLUMN with
+     align-items:center, so margins alone keep it centered — align-self:flex-start
+     is what actually left-aligns it. Higher specificity ([stMain] prefix) beats
+     the global .block-container rule deterministically. */
+  [data-testid="stMain"] [data-testid="stMainBlockContainer"],
+  [data-testid="stMain"] .block-container {{
+    max-width: 540px !important;
+    align-self: flex-start !important;
+    margin-left: clamp(24px, 3vw, 64px) !important;
+    margin-right: 0 !important;
+    padding-right: 1rem !important;
+  }}
+  h1.hero-headline {{ font-size: clamp(38px, 3.4vw, 52px) !important; }}
+  /* minimalist art panel hard against the right edge */
+  .auth-photo {{
+    position: fixed; top: 0; right: 0; height: 100vh; width: 44vw; z-index: 0;
+    background-image: {bg};
+    background-size: cover; background-position: center center;
+    box-shadow: -40px 0 110px -60px rgba(26,23,20,0.45);
+  }}
+  .auth-photo .ap-brand {{
+    position: absolute; left: 44px; bottom: 40px;
+    color: var(--ink);
+    font-family: var(--display); font-size: 30px; font-weight: 600;
+  }}
+  .auth-photo .ap-brand .dot {{ color: var(--accent); }}
+  @media (max-width: 1100px) {{
+    .auth-photo {{ display: none; }}
+    [data-testid="stMain"] [data-testid="stMainBlockContainer"],
+    [data-testid="stMain"] .block-container {{
+      max-width: 560px !important; align-self: center !important; margin: 0 auto !important;
+    }}
+  }}
+</style>
+<div class="auth-photo"><div class="ap-brand">Wardrobe<span class="dot">.</span></div></div>
+""",
+        unsafe_allow_html=True,
+    )
+
+
+# ---------- persistent login (server-side sessions + browser cookie) ----------
+# Streamlit has no native cookie-write, so we use streamlit-cookies-controller
+# for set/delete. Crucially we READ the token on boot from st.context.cookies
+# (populated synchronously from the request headers) so a refresh restores the
+# user with NO iframe round-trip and therefore no flash of the login screen.
+
+def mount_cookie_controller():
+    """Instantiate the cookie component for THIS run and stash it.
+
+    streamlit-cookies-controller renders an (invisible) component every time its
+    constructor runs; it must be constructed exactly once per script run to stay
+    mounted. Call this once at the top of the entrypoint (main.py) — set/remove
+    issued later in the same run then operate on a mounted component.
+    """
+    from streamlit_cookies_controller import CookieController
+    ctrl = CookieController()
+    st.session_state["_cookie_ctrl"] = ctrl
+    return ctrl
+
+
+def _cookie_controller():
+    ctrl = st.session_state.get("_cookie_ctrl")
+    return ctrl if ctrl is not None else mount_cookie_controller()
+
+
+def restore_session() -> dict | None:
+    """If a valid session cookie exists, hydrate st.session_state['user'].
+
+    Reads from st.context.cookies (request headers — instant, no flash). Safe
+    to call on every run; it's a no-op once the user is in session_state.
+    """
+    user = st.session_state.get("user")
+    if user is not None:
+        return user
+    try:
+        token = st.context.cookies.get(auth.SESSION_COOKIE_NAME)
+    except Exception:
+        token = None
+    if not token:
+        return None
+    user = db.get_session_user(token)
+    if user is not None:
+        st.session_state["user"] = user
+    return user
+
+
+def establish_session(user: dict) -> None:
+    """Persist a login: create a server-side session and set the browser cookie."""
+    token = auth.new_session_token()
+    db.create_session(token, user["id"], ttl_days=auth.SESSION_TTL_DAYS)
+    try:
+        _cookie_controller().set(
+            auth.SESSION_COOKIE_NAME, token,
+            max_age=auth.SESSION_TTL_DAYS * 24 * 3600, same_site="lax", path="/",
+        )
+    except Exception:
+        # Cookie write failed (e.g. component not yet mounted) — login still
+        # works for this session; persistence resumes on the next successful set.
+        pass
+
+
+def clear_session() -> None:
+    """Log out: revoke the server-side session and remove the browser cookie."""
+    try:
+        token = st.context.cookies.get(auth.SESSION_COOKIE_NAME)
+    except Exception:
+        token = None
+    if token:
+        db.delete_session(token)
+    try:
+        _cookie_controller().remove(auth.SESSION_COOKIE_NAME)
+    except Exception:
+        pass
 
 
 def _picsum_fallback_url(article_id: str, width: int, height: int) -> str:
@@ -99,6 +275,12 @@ def _resolve_image_src(article_id: str, item: dict | None,
     fetch (in `prefetch_images_sync`) sidesteps both issues.
     """
     aid = str(article_id)
+    # Tier 0: committed curated product photo (always wins — guarantees the
+    # image matches the product's name/category for the curated demo catalogue).
+    curated = ASSETS_DIR / "products" / f"{aid}.jpg"
+    if curated.exists():
+        import base64
+        return f"data:image/jpeg;base64,{base64.b64encode(curated.read_bytes()).decode()}"
     # Tier 1: locally-downloaded H&M product photos (if user has the 16 GB bundle)
     if len(aid) >= 3:
         local = IMAGE_DIR / aid[:3] / f"{aid}.jpg"
@@ -243,101 +425,130 @@ def article_image_url(article_id: str, item: dict | None = None,
 
 CUSTOM_CSS = """
 <style>
-  /* ===== Design system — Apple-first, Yandex-secondary ===== */
-  /* Apple: SF Pro, generous whitespace, pill buttons, one blue accent (#0071e3),
-     hairline borders, near-no shadows. Yandex: card-grid rhythm with subtle
-     coloured chips, slightly tighter density. */
+  /* ===== Design system — editorial fashion (2026) ===== */
+  /* Warm paper background + vermilion accent + Fraunces display serif headlines
+     over Inter body. Bolder depth on cards, oversized hero type. Fonts are
+     loaded by the theme in config.toml; families referenced here by name. */
   :root {
-    --ink:       #1d1d1f;       /* Apple's headline black */
-    --ink-2:     #424245;
-    --muted:     #86868b;       /* Apple's standard secondary text */
-    --border:    #f5f5f7;       /* hairline — almost invisible */
-    --border-2:  #d2d2d7;       /* slightly more visible on hover */
+    --ink:       #1a1714;       /* warm near-black */
+    --ink-2:     #4a443d;
+    --muted:     #8a8178;       /* warm grey */
+    --border:    #ece7e0;       /* warm hairline */
+    --border-2:  #d8d1c7;
     --bg:        #ffffff;
-    --bg-soft:   #fbfbfd;
-    --accent:    #0071e3;       /* Apple's primary blue (apple.com CTA) */
-    --accent-2:  #0077ed;       /* hover-brighter */
-    --shadow-1:  0 1px 1px rgba(16,24,40,0.02);
-    --shadow-2:  0 4px 14px rgba(16,24,40,0.06);
+    --bg-soft:   #f7f4ef;       /* warm paper */
+    --accent:      #e8462a;     /* vermilion — bold, fashion-forward */
+    --accent-2:    #cf3d20;     /* darker hover */
+    --accent-soft: rgba(232,70,42,0.10);
+    --shadow-1:  0 1px 2px rgba(26,23,20,0.05);
+    --shadow-2:  0 18px 44px -16px rgba(26,23,20,0.22);
+    --display:   "Fraunces", "Times New Roman", Georgia, serif;
+    --sans:      "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   }
 
   html, body, [class*="css"]  {
-    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text",
-                 "Helvetica Neue", "Segoe UI", system-ui, sans-serif;
+    font-family: var(--sans);
     color: var(--ink);
     -webkit-font-smoothing: antialiased;
     background: var(--bg-soft);
   }
+  /* Faint tiling hanger motif on the warm paper — fills the page margins with a
+     subtle brand texture (sits behind all content; only visible in whitespace). */
+  [data-testid="stAppViewContainer"]::before {
+    content: "";
+    position: fixed; inset: 0; z-index: 0; pointer-events: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='150' height='150' viewBox='0 0 150 150'%3E%3Cg fill='none' stroke='%231a1714' stroke-opacity='0.05' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M75 64 V58 a5 5 0 1 1 5 5'/%3E%3Cpath d='M75 64 L52 82 a2 2 0 0 0 1.3 3.6 H96.7 a2 2 0 0 0 1.3-3.6 Z'/%3E%3C/g%3E%3C/svg%3E");
+    background-size: 150px 150px;
+  }
   #MainMenu, footer, [data-testid="stToolbar"], header[data-testid="stHeader"] { display: none; }
   .block-container,
   [data-testid="stMainBlockContainer"] {
-    max-width: 1240px;
+    max-width: 1600px;
+    margin-left: auto !important;     /* centre on wide monitors — no big right gap */
+    margin-right: auto !important;
     padding-top: 2.5rem;
     padding-bottom: 4rem;
+    padding-left: 3rem; padding-right: 3rem;
     min-height: 920px;
+    position: relative; z-index: 1;   /* sit above the fixed grain overlay */
   }
+  [data-testid="stSidebar"] { position: relative; z-index: 1; }
 
-  /* Sidebar — visible, clean */
-  [data-testid="stSidebar"] {
-    background: var(--bg) !important;
-    border-right: 1px solid var(--border);
-  }
+  /* Sidebar nav (st.navigation auto-menu) */
   [data-testid="stSidebar"] [data-testid="stSidebarNav"] a {
     font-size: 14px;
     font-weight: 500;
+    border-radius: 9px;
+  }
+  /* Highlight the active page in accent */
+  [data-testid="stSidebar"] [data-testid="stSidebarNav"] a[aria-current="page"] {
+    background: var(--accent-soft) !important;
+    color: var(--accent-2) !important;
+    font-weight: 600;
+  }
+  /* Product detail is reached from cards, not the menu — hide its nav entry. */
+  [data-testid="stSidebar"] [data-testid="stSidebarNav"] a[href$="/product"] {
+    display: none !important;
   }
 
-  /* Headings — Apple-scale typography */
+  /* Headings — editorial display serif, oversized */
+  h1, h2 { position: relative; z-index: 1; }
   h1 {
-    font-weight: 600; font-size: 48px;
-    letter-spacing: -0.03em;
-    line-height: 1.07;
-    margin-bottom: 0.25rem !important;
+    font-family: var(--display);
+    font-weight: 600; font-size: 52px;
+    letter-spacing: -0.02em;
+    line-height: 1.02;
+    margin-bottom: 0.35rem !important;
     color: var(--ink);
   }
-  h1.hero-headline { font-size: 56px; }
-  @media (min-width: 1024px) {
-    h1.hero-headline { font-size: 64px; }
+  h1.hero-headline {
+    font-size: clamp(46px, 6.5vw, 92px);
+    font-weight: 600;
+    letter-spacing: -0.035em;
+    line-height: 0.98;
   }
   h2 {
-    font-weight: 600; font-size: 22px;
-    letter-spacing: -0.015em;
+    font-family: var(--display);
+    font-weight: 600; font-size: 27px;
+    letter-spacing: -0.01em;
     margin-top: 2.5rem !important;
     color: var(--ink);
   }
   h3 {
-    font-weight: 500; font-size: 15px;
+    font-weight: 600; font-size: 15px;
     color: var(--ink); margin: 0 !important;
   }
   .subtitle {
-    color: var(--muted); font-size: 17px;
-    line-height: 1.5;
-    margin-bottom: 2.5rem; max-width: 640px;
+    color: var(--ink-2); font-size: 18px;
+    line-height: 1.55;
+    margin-bottom: 2.5rem; max-width: 620px;
+    position: relative; z-index: 1;
   }
 
-  /* Pill */
+  /* Pill — accent-tinted editorial label */
   .pill {
-    display: inline-block; padding: 4px 12px; border-radius: 100px;
-    background: var(--bg);
-    border: 1px solid var(--border-2);
-    color: var(--ink); font-size: 12px; font-weight: 500;
+    display: inline-block; padding: 5px 14px; border-radius: 100px;
+    background: var(--accent-soft);
+    border: 1px solid transparent;
+    color: var(--accent-2); font-size: 12px; font-weight: 600;
+    letter-spacing: 0.01em;
     margin-bottom: 1.25rem;
-    box-shadow: var(--shadow-1);
+    position: relative; z-index: 1;
   }
 
   /* ===== Product cards — square, minimal, breathable ===== */
   .card {
     background: var(--bg);
     border: 1px solid var(--border);
-    border-radius: 16px;
+    border-radius: 18px;
     padding: 0;
     margin: 6px 0;
     overflow: hidden;
-    transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+    transition: transform 0.22s cubic-bezier(.2,.7,.2,1), box-shadow 0.22s ease, border-color 0.22s ease;
     box-shadow: var(--shadow-1);
   }
   .card:hover {
-    transform: translateY(-2px);
+    transform: translateY(-6px);
     box-shadow: var(--shadow-2);
     border-color: var(--border-2);
   }
@@ -442,7 +653,7 @@ CUSTOM_CSS = """
     background: var(--accent) !important;
     color: #ffffff !important;
     border-color: var(--accent) !important;
-    font-weight: 500 !important;
+    font-weight: 600 !important;
     box-shadow: none !important;
   }
   .stButton > button[kind="primary"]:hover {
@@ -488,6 +699,34 @@ CUSTOM_CSS = """
   }
   div[role="radiogroup"] > label > div:first-child { display: none !important; }
 
+  /* Auth-screen mode selector: underline tabs (override the segmented pill) */
+  .st-key-auth_mode div[role="radiogroup"] {
+    flex-direction: row !important;
+    gap: 26px !important;
+    background: transparent !important;
+    padding: 0 !important;
+    border-radius: 0 !important;
+    width: 100% !important;
+    border-bottom: 1px solid var(--border);
+  }
+  .st-key-auth_mode div[role="radiogroup"] > label {
+    background: transparent !important;
+    padding: 6px 2px 12px !important;
+    border-radius: 0 !important;
+    font-size: 17px !important;
+    color: var(--muted) !important;
+    box-shadow: none !important;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+  }
+  .st-key-auth_mode div[role="radiogroup"] > label:hover { color: var(--ink) !important; }
+  .st-key-auth_mode div[role="radiogroup"] > label:has(input:checked) {
+    background: transparent !important;
+    color: var(--accent) !important;
+    border-bottom: 2px solid var(--accent) !important;
+    box-shadow: none !important;
+  }
+
   /* Form labels */
   .field-label {
     font-size: 11px; font-weight: 500; color: var(--muted);
@@ -498,32 +737,64 @@ CUSTOM_CSS = """
   /* Metrics card spacing */
   [data-testid="stMetricValue"] { font-size: 28px !important; font-weight: 600 !important; }
   [data-testid="stMetricLabel"] { font-size: 12px !important; color: var(--muted) !important; }
+
+  /* ===== Top-right account menu (circular initials avatar + dropdown) ===== */
+  .st-key-account_menu {
+    position: fixed;
+    top: 14px; right: 22px;
+    z-index: 1000;
+    width: auto !important;
+  }
+  .st-key-account_menu button {
+    width: 42px !important; height: 42px !important;
+    min-height: 42px !important; padding: 0 !important;
+    border-radius: 50% !important;
+    background: var(--accent) !important;
+    border: 2px solid #fff !important;
+    color: #fff !important;
+    font-weight: 700 !important; font-size: 15px !important;
+    letter-spacing: 0;
+    box-shadow: var(--shadow-2) !important;
+    transition: transform .15s ease, background .15s ease !important;
+    /* keep the initials on one centered line — no wrapping */
+    display: flex !important; align-items: center !important; justify-content: center !important;
+    line-height: 1 !important; white-space: nowrap !important; overflow: hidden !important;
+  }
+  .st-key-account_menu button > * { margin: 0 !important; line-height: 1 !important; white-space: nowrap !important; }
+  .st-key-account_menu button p { margin: 0 !important; line-height: 1 !important; }
+  .st-key-account_menu button:hover {
+    transform: translateY(-1px) scale(1.04);
+    background: var(--accent-2) !important; color: #fff !important;
+  }
+  /* drop the popover's default caret — the avatar IS the affordance.
+     The caret lives in an aria-hidden wrapper that reserves width even when the
+     glyph is hidden, so hide the whole wrapper (it otherwise reads as "Z˅"). */
+  .st-key-account_menu button div[aria-hidden="true"] { display: none !important; }
+  .st-key-account_menu button svg,
+  .st-key-account_menu button [data-testid="stIconMaterial"] { display: none !important; }
+
+  .acct-pop { text-align: center; padding: 8px 6px 2px; min-width: 210px; }
+  .acct-avatar-lg {
+    width: 58px; height: 58px; margin: 0 auto 12px;
+    border-radius: 50%;
+    background: var(--accent); color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 21px;
+  }
+  .acct-name { font-family: var(--display); font-size: 20px; font-weight: 600; color: var(--ink); line-height: 1.15; }
+  .acct-email { font-size: 13px; color: var(--muted); margin-top: 3px; word-break: break-all; }
+  .acct-role {
+    display: inline-block; margin-top: 10px;
+    padding: 2px 11px; border-radius: 100px;
+    background: var(--accent-soft); color: var(--accent-2);
+    font-size: 11px; font-weight: 600;
+  }
 </style>
 """
 
 
 def apply_css() -> None:
     st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
-
-
-HIDE_SIDEBAR_CSS = """
-<style>
-  [data-testid="stSidebar"], [data-testid="collapsedControl"] {
-    display: none !important;
-  }
-  .block-container, [data-testid="stMainBlockContainer"] {
-    max-width: 880px !important;
-    padding-top: 4rem !important;
-    margin-left: auto !important;
-    margin-right: auto !important;
-  }
-</style>
-"""
-
-
-def hide_sidebar() -> None:
-    """Hide the sidebar entirely — used on the auth screen and other pre-login pages."""
-    st.markdown(HIDE_SIDEBAR_CSS, unsafe_allow_html=True)
 
 
 # ---------- cached loaders (shared across pages) ----------
@@ -581,7 +852,8 @@ def load_ncf():
     return item_emb, maps["item_id_to_idx"], maps["idx_to_item_id"]
 
 
-def recommend_ncf(positives: set, excluded: set | None, k: int = 6
+def recommend_ncf(positives: set, excluded: set | None, k: int = 6,
+                  include: set | None = None
                   ) -> list[tuple[str, float]] | None:
     """Recommend via item-item cosine similarity in NCF embedding space.
 
@@ -605,6 +877,13 @@ def recommend_ncf(positives: set, excluded: set | None, k: int = 6
         return None
     user_emb = user_emb / norm
     scores = item_emb @ user_emb  # cosine since both L2-normalised
+    if include is not None:
+        keep = np.zeros(len(scores), dtype=bool)
+        for a in include:
+            idx = item_to_idx.get(a)
+            if idx is not None:
+                keep[idx] = True
+        scores[~keep] = -np.inf
     if excluded:
         for aid in excluded:
             idx = item_to_idx.get(aid)
@@ -664,12 +943,17 @@ def build_user_profile(saved_articles, preferences, articles, tfidf, item_id_to_
     return normalize(csr_matrix(profile), norm="l2", axis=1)
 
 
-def recommend_cb(profile, tfidf, item_id_to_row, excluded, k):
+def recommend_cb(profile, tfidf, item_id_to_row, excluded, k, include=None):
     """CB rec → list of (article_id, normalised_score). Score is cosine
-    similarity (0–1, since both profile and tfidf rows are L2-normalised)."""
+    similarity (0–1, since both profile and tfidf rows are L2-normalised).
+    `include` restricts candidates (ranks within the curated catalogue)."""
     if profile is None or profile.nnz == 0:
         return None
     scores = (profile @ tfidf.T).toarray().ravel()
+    if include is not None:
+        keep = np.zeros(len(scores), dtype=bool)
+        keep[[item_id_to_row[a] for a in include if a in item_id_to_row]] = True
+        scores[~keep] = -np.inf
     if excluded:
         excl_rows = [item_id_to_row[a] for a in excluded if a in item_id_to_row]
         scores[excl_rows] = -np.inf
@@ -682,9 +966,10 @@ def recommend_cb(profile, tfidf, item_id_to_row, excluded, k):
     return [(row_to_item[i], float(scores[i])) for i in order[:k]]
 
 
-def recommend_als(model, item_index, item_to_row, positives, excluded, k):
+def recommend_als(model, item_index, item_to_row, positives, excluded, k, include=None):
     """ALS rec → list of (article_id, normalised_score). Raw ALS scores aren't
-    bounded to 0–1, so we minmax-rescale the top-k slice for display."""
+    bounded to 0–1, so we minmax-rescale the top-k slice for display. `include`
+    restricts to a candidate set (then we rank all items so curated ones surface)."""
     cols = [item_to_row[a] for a in positives if a in item_to_row]
     if not cols:
         return None
@@ -692,8 +977,11 @@ def recommend_als(model, item_index, item_to_row, positives, excluded, k):
         (np.ones(len(cols), dtype=np.float32), ([0] * len(cols), cols)),
         shape=(1, len(item_index)),
     )
-    extra = sum(1 for a in (excluded or ()) if a in item_to_row and a not in positives)
-    request_n = min(k + extra, len(item_index))
+    if include is not None:
+        request_n = len(item_index)   # rank everything, then keep the curated slice
+    else:
+        extra = sum(1 for a in (excluded or ()) if a in item_to_row and a not in positives)
+        request_n = min(k + extra, len(item_index))
     item_rows, raw_scores = model.recommend(
         0, user_items, N=request_n,
         filter_already_liked_items=True, recalculate_user=True,
@@ -701,6 +989,8 @@ def recommend_als(model, item_index, item_to_row, positives, excluded, k):
     pairs = [(item_index[i], float(s)) for i, s in zip(item_rows, raw_scores)]
     if excluded:
         pairs = [(a, s) for a, s in pairs if a not in excluded]
+    if include is not None:
+        pairs = [(a, s) for a, s in pairs if a in include]
     pairs = pairs[:k]
     if not pairs:
         return []
@@ -715,7 +1005,8 @@ def recommend_als(model, item_index, item_to_row, positives, excluded, k):
 
 
 def recommend_hybrid(profile, tfidf, item_id_to_row, als_model, als_item_index,
-                     als_item_to_row, candidate_items, positives, excluded, alpha, k):
+                     als_item_to_row, candidate_items, positives, excluded, alpha, k,
+                     include=None):
     """Hybrid rec → list of (article_id, combined_score). The combined score is
     α·minmax(CB) + (1-α)·minmax(CF), already in 0–1."""
     cb_score = np.zeros(len(candidate_items), dtype=np.float32)
@@ -747,6 +1038,9 @@ def recommend_hybrid(profile, tfidf, item_id_to_row, als_model, als_item_index,
     if excluded:
         excl_mask = np.array([c in excluded for c in candidate_items])
         combined = np.where(excl_mask, -np.inf, combined)
+    if include is not None:
+        inc_mask = np.array([c in include for c in candidate_items])
+        combined = np.where(inc_mask, combined, -np.inf)
 
     if len(combined) <= k:
         order = np.argsort(-combined)
@@ -831,10 +1125,14 @@ def load_trending(top_n: int = 400) -> pd.Series:
     return counts
 
 
-def recommend_trending(excluded: set | None, k: int = 6) -> list[tuple[str, float]]:
+def recommend_trending(excluded: set | None, k: int = 6,
+                       include: set | None = None) -> list[tuple[str, float]]:
     """Top-k most-purchased articles, filtered against `excluded`. Score is the
-    item's frequency rescaled to 0.65–0.99 for display."""
+    item's frequency rescaled to 0.65–0.99 for display. `include` restricts the
+    pool (used to rank within the curated catalogue)."""
     counts = load_trending()
+    if include is not None:
+        counts = counts[counts.index.isin(include)]
     if excluded:
         counts = counts[~counts.index.isin(excluded)]
     top = counts.head(k)
@@ -850,7 +1148,8 @@ def recommend_trending(excluded: set | None, k: int = 6) -> list[tuple[str, floa
 
 
 def recommend_customers_like_you(als_model, als_item_index, als_item_to_row,
-                                  positives: set, excluded: set, k: int = 6
+                                  positives: set, excluded: set, k: int = 6,
+                                  include: set | None = None
                                   ) -> list[tuple[str, float]]:
     """Pure-ALS rec, framed as 'customers like you also liked'. Same fold-in
     mechanic as recommend_als — distinct rail title gives users intuition for
@@ -858,7 +1157,8 @@ def recommend_customers_like_you(als_model, als_item_index, als_item_to_row,
 
     Returns [] (not None) so the rail renders an empty-state card when the user
     has no positives yet."""
-    out = recommend_als(als_model, als_item_index, als_item_to_row, positives, excluded, k)
+    out = recommend_als(als_model, als_item_index, als_item_to_row, positives, excluded, k,
+                        include=include)
     return out or []
 
 
@@ -981,12 +1281,19 @@ def mmr_rerank(candidates, tfidf, item_id_to_row, k: int,
     return selected
 
 
-def recommend_similar(article_id: str, tfidf, item_id_to_row, k=8, exclude=None):
-    """'More like this' → list of (article_id, cosine_similarity)."""
+def recommend_similar(article_id: str, tfidf, item_id_to_row, k=8, exclude=None,
+                      include=None):
+    """'More like this' → list of (article_id, cosine_similarity). `include`
+    restricts candidates (ranks within the curated catalogue)."""
     if article_id not in item_id_to_row:
         return []
     row = item_id_to_row[article_id]
     scores = (tfidf[row] @ tfidf.T).toarray().ravel()
+    if include is not None:
+        keep = np.zeros(len(scores), dtype=bool)
+        inc_rows = [item_id_to_row[a] for a in include if a in item_id_to_row]
+        keep[inc_rows] = True
+        scores[~keep] = -np.inf
     scores[row] = -np.inf
     if exclude:
         for aid in exclude:
@@ -1154,7 +1461,9 @@ def check_session_timeout() -> None:
     last = st.session_state.get("_last_activity")
     now = time.time()
     if last is not None and (now - last) > SESSION_TIMEOUT_SECONDS:
-        # Idle too long — clear session (preserve display prefs)
+        # Idle too long — revoke the persistent cookie too, else restore_session()
+        # would immediately log them back in on the next run.
+        clear_session()
         for k in list(st.session_state.keys()):
             if k not in ("mmr_enabled", "show_tech_details"):
                 st.session_state.pop(k, None)
@@ -1166,23 +1475,57 @@ def check_session_timeout() -> None:
     st.session_state["_last_activity"] = now
 
 
-def render_sidebar(user: dict) -> None:
-    with st.sidebar:
-        st.markdown(f"### {user['display_name']}")
-        st.caption(user["email"])
-        role = user["role"]
-        if role in ("admin", "analyst"):
-            st.caption(role.capitalize())
-        st.divider()
-        if role in ("admin", "analyst"):
-            if st.button("Analytics", use_container_width=True, key="sidebar_analytics"):
-                st.switch_page("pages/_analytics.py")
-        if role == "admin":
-            if st.button("Admin panel", use_container_width=True, key="sidebar_admin"):
-                st.switch_page("pages/_admin.py")
+def _initials(name: str) -> str:
+    parts = [p for p in name.replace(".", " ").replace("_", " ").split() if p]
+    if len(parts) >= 2:                       # "Demo Customer" -> "DC"
+        return (parts[0][0] + parts[1][0]).upper()
+    if parts:                                  # "Zahid" -> "Z" (single initial, conventional)
+        return parts[0][0].upper()
+    return "?"
 
+
+def render_account_menu(user: dict) -> None:
+    """Top-right account avatar that opens a dropdown (name, email, role, logout).
+
+    The conventional web pattern: a circular initials avatar in the corner that
+    reveals the full identity + a destructive logout on click. Rendered in the
+    main area and pinned top-right via the `.st-key-account_menu` scope in CSS.
+    """
+    import html
+    name = user.get("display_name") or user.get("email", "")
+    email = user.get("email", "")
+    role = user.get("role", "customer")
+    initials = _initials(name)
+    with st.popover(initials, use_container_width=False, key="account_menu"):
+        role_chip = (f'<span class="acct-role">{html.escape(role.capitalize())}</span>'
+                     if role in ("admin", "analyst") else "")
+        st.markdown(
+            '<div class="acct-pop">'
+            f'<div class="acct-avatar-lg">{html.escape(initials)}</div>'
+            f'<div class="acct-name">{html.escape(name)}</div>'
+            f'<div class="acct-email">{html.escape(email)}</div>'
+            f'{role_chip}'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        if st.button("Log out", use_container_width=True, key="acct_logout"):
+            clear_session()  # revoke server-side session + clear the browser cookie
+            for k in list(st.session_state.keys()):
+                if k not in ("mmr_enabled", "show_tech_details"):  # preserve display prefs
+                    st.session_state.pop(k, None)
+            st.rerun()
+
+
+def render_sidebar(user: dict) -> None:
+    """Top-right account menu + sidebar extras (docs, display options).
+
+    Page links (Home/Catalogue/Analytics/Admin/…) are owned by st.navigation;
+    identity + logout live in the top-right account menu (render_account_menu).
+    """
+    render_account_menu(user)  # rendered in main area, pinned top-right via CSS
+
+    with st.sidebar:
         # ---------- documentation ----------
-        st.divider()
         pdf_bytes = _load_docs_pdf()
         if pdf_bytes:
             st.download_button(
@@ -1211,14 +1554,6 @@ def render_sidebar(user: dict) -> None:
             help="Display article IDs and other internal identifiers on product "
                  "cards. Off by default (end-user view).",
         )
-
-        st.divider()
-        if st.button("Log out", use_container_width=True, key="sidebar_logout"):
-            # Full session clear — prevents data leaking across users on shared devices
-            for k in list(st.session_state.keys()):
-                if k not in ("mmr_enabled", "show_tech_details"):  # preserve display prefs
-                    st.session_state.pop(k, None)
-            st.rerun()
 
 
 def _save_toggle(article_id: str, user_id: int, is_saved: bool, key: str) -> None:

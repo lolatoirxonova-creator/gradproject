@@ -14,7 +14,7 @@ APP_DIR="${APP_DIR:-/opt/gradproject}"
 
 cd "$(dirname "$0")/.."  # repo root
 
-echo "==> 1/6 sync app code (app/, src/, requirements.txt)"
+echo "==> 1/6 sync app code (app/, src/, .streamlit/, requirements.txt)"
 rsync -avz --delete \
     --exclude '__pycache__' \
     --exclude '.DS_Store' \
@@ -23,6 +23,9 @@ rsync -avz --delete \
 rsync -avz \
     --exclude '__pycache__' \
     src/  "${DROPLET}:${APP_DIR}/src/"
+# .streamlit/config.toml carries the theme tokens (palette, fonts, radii) — the
+# UI looks wrong without it. Theme changes also need a streamlit restart (step 6).
+rsync -avz .streamlit/  "${DROPLET}:${APP_DIR}/.streamlit/"
 rsync -avz requirements.txt CLAUDE.md  "${DROPLET}:${APP_DIR}/"
 
 echo "==> 2/6 sync evaluation outputs + docs (for Evaluation page + sidebar PDF)"

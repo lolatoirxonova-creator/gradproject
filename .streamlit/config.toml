@@ -1,10 +1,22 @@
 [theme]
 base = "light"
-primaryColor = "#1d1d1f"
-backgroundColor = "#ffffff"
-secondaryBackgroundColor = "#f5f5f7"
-textColor = "#1d1d1f"
-font = "sans-serif"
+# Bold editorial palette: warm paper + vermilion accent (2026 fashion direction).
+primaryColor = "#E8462A"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F7F4EF"
+textColor = "#1A1714"
+borderColor = "#ECE7E0"
+linkColor = "#E8462A"
+baseRadius = "0.85rem"
+buttonRadius = "2rem"
+# Fraunces (editorial display serif) for headings, Inter for body/UI — loaded via
+# the Google Fonts shorthand "{family}:{css_url}". Changing fonts needs a restart.
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+headingFont = "Fraunces:https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&display=swap"
+
+[theme.sidebar]
+backgroundColor = "#FBFAF7"
+borderColor = "#ECE7E0"
 
 [server]
 headless = true

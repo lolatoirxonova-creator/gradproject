@@ -62,6 +62,10 @@ def main():
     shared.render_sidebar(user)
 
     articles = shared.load_articles()
+    # Curated demo: browse only the 50 curated products (matching photos).
+    curated = shared.curated_set()
+    if curated:
+        articles = articles[articles["article_id"].isin(curated)]
     state = db.user_state(user["id"])
     saved_set = set(state["saved"])
     liked = state["liked"]
@@ -70,7 +74,7 @@ def main():
     st.markdown('<div class="pill">Catalogue</div>', unsafe_allow_html=True)
     st.markdown("<h1>Browse the catalogue.</h1>", unsafe_allow_html=True)
     st.markdown(
-        '<p class="subtitle">All 105,000+ items in the H&amp;M catalogue. Search by name, filter '
+        f'<p class="subtitle">A curated edit of {len(articles)} pieces. Search by name, filter '
         'by department / type / colour / price, then save items to shape your recommendations.</p>',
         unsafe_allow_html=True,
     )

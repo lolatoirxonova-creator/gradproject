@@ -21,10 +21,14 @@ plotly>=5.18.0
 nltk>=3.8.1
 
 # Deployment
-streamlit>=1.31.0
+# >=1.50 required for st.navigation routing + the config.toml theme tokens
+# (baseRadius, borderColor, [[theme.fontFaces]], [theme.sidebar]) the UI relies on.
+streamlit>=1.50.0
 
 # Auth (bcrypt password hashing for the platform's user table)
 bcrypt>=4.1.0
+# Persistent login — writes the session cookie (Streamlit has no native cookie-write)
+streamlit-cookies-controller>=0.0.4
 
 # Notebooks
 jupyter>=1.0.0

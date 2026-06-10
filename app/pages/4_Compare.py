@@ -105,6 +105,8 @@ def main():
     item_id_to_row = shared.build_item_id_to_row(articles)
     als_item_to_row, candidate_items = shared.als_lookups(als_item_index)
 
+    include = shared.curated_set() or None  # gate to curated demo catalogue
+
     state = db.user_state(user["id"])
     saved = state["saved"]
     liked = state["liked"]
@@ -147,15 +149,17 @@ def main():
     profile = shared.build_user_profile(saved, preferences, articles, tfidf, item_id_to_row)
 
     with st.spinner("Computing all four algorithms…"):
-        cb_pool = shared.recommend_cb(profile, tfidf, item_id_to_row, excluded, pool_size)
+        cb_pool = shared.recommend_cb(profile, tfidf, item_id_to_row, excluded, pool_size,
+                                      include=include)
         als_pool = shared.recommend_als(als_model, als_item_index, als_item_to_row,
-                                         saved_set, excluded, pool_size)
+                                         saved_set, excluded, pool_size, include=include)
         hyb_pool = shared.recommend_hybrid(
             profile, tfidf, item_id_to_row,
             als_model, als_item_index, als_item_to_row,
             candidate_items, saved_set, excluded, alpha, pool_size,
+            include=include,
         )
-        ncf_pool = shared.recommend_ncf(saved_set, excluded, pool_size)
+        ncf_pool = shared.recommend_ncf(saved_set, excluded, pool_size, include=include)
 
     cb_recs  = _apply_mmr(cb_pool)
     als_recs = _apply_mmr(als_pool)

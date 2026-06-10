@@ -33,6 +33,7 @@ def _on_login(email, password):
     try:
         user = auth.authenticate(email, password)
         st.session_state["user"] = user
+        shared.establish_session(user)  # persist across refreshes
         return None
     except auth.LockedError as e:
         return f"🔒 {e}"
@@ -52,6 +53,7 @@ def _on_signup(email, password, display_name, prefs):
         user = auth.register(email, password, display_name)
         auth.set_preferences(user["id"], prefs)
         st.session_state["user"] = user
+        shared.establish_session(user)  # persist across refreshes
         return None
     except auth.AuthError as e:
         return str(e)
@@ -59,20 +61,41 @@ def _on_signup(email, password, display_name, prefs):
 
 def render_auth_screen():
     shared.apply_css()
-    shared.hide_sidebar()  # pre-login: no nav, focus on the form
+    # No sidebar pre-login (st.navigation position="hidden"). Split-screen layout:
+    # the form sits on the left, a decorative branded panel fills the right — the
+    # conventional fix for auth-page whitespace. This CSS only renders while
+    # logged out, so it's effectively scoped to the auth screen.
+    shared.render_auth_panel()
+
+    # Mode is session-state driven (a radio reruns on change) so the hero copy can
+    # react to it — st.tabs switches client-side only and can't change the heading.
+    is_signup = st.session_state.get("auth_mode", "Log in") == "Create account"
 
     st.markdown('<div class="pill">🛍️  Personalised Recommendations</div>', unsafe_allow_html=True)
-    st.markdown("<h1 class='hero-headline'>Built to learn what you actually wear.</h1>", unsafe_allow_html=True)
-    st.markdown(
-        '<p class="subtitle">Log in or create an account to get recommendations from four learned '
-        'models — content-based, collaborative filtering, hybrid, and neural — tuned to your saved '
-        'items and preferences.</p>',
-        unsafe_allow_html=True,
+    if is_signup:
+        st.markdown("<h1 class='hero-headline'>Create your account.</h1>", unsafe_allow_html=True)
+        st.markdown(
+            '<p class="subtitle">Pick a few categories you love and we’ll tailor recommendations from '
+            'four learned models — content-based, collaborative filtering, hybrid, and neural — from '
+            'your very first visit.</p>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown("<h1 class='hero-headline'>Built to learn what you actually wear.</h1>", unsafe_allow_html=True)
+        st.markdown(
+            '<p class="subtitle">Log in to get recommendations from four learned models — '
+            'content-based, collaborative filtering, hybrid, and neural — tuned to your saved '
+            'items and preferences.</p>',
+            unsafe_allow_html=True,
+        )
+
+    # Tab-style selector that drives the mode (and reruns).
+    st.radio(
+        "Authentication mode", ["Log in", "Create account"],
+        horizontal=True, label_visibility="collapsed", key="auth_mode",
     )
 
-    tab_login, tab_signup = st.tabs(["Log in", "Create account"])
-
-    with tab_login:
+    if not is_signup:
         with st.form("login_form", clear_on_submit=False):
             email = st.text_input("Email", key="login_email")
             password = st.text_input("Password", type="password", key="login_password")
@@ -83,8 +106,7 @@ def render_auth_screen():
                 st.error(err)
             else:
                 st.rerun()
-
-    with tab_signup:
+    else:
         articles = shared.load_articles()
         categories = sorted({c for c in articles["product_type_name"].dropna() if c})
         with st.form("signup_form", clear_on_submit=False):
@@ -143,6 +165,14 @@ def render_home(user):
     item_id_to_row = shared.build_item_id_to_row(articles)
     als_item_to_row, candidate_items = shared.als_lookups(als_item_index)
 
+    # Curated demo: gate all rails to the 50 curated products (matching photos)
+    # via an `include` filter on each recommender. candidate_items MUST stay the
+    # full ALS index — recommend_hybrid indexes its CF-score array by ALS row
+    # position. Falls back to the full catalogue when no curated set is present.
+    curated = shared.curated_set()
+    curated_articles = articles[articles["article_id"].isin(curated)] if curated else articles
+    include = curated or None
+
     # Single DB call replaces 3 separate connections.
     state = db.user_state(user["id"])
     saved = state["saved"]
@@ -187,6 +217,7 @@ def render_home(user):
             profile, tfidf, item_id_to_row,
             als_model, als_item_index, als_item_to_row,
             candidate_items, saved_set, excluded, best_alpha, pool_size,
+            include=include,
         ) or []
         picked_recs = _apply_mmr(hybrid_pool)
         picked_ids = [a for a, _ in picked_recs]
@@ -198,6 +229,7 @@ def render_home(user):
             latest_aid = saved[-1]
             sim_pool = shared.recommend_similar(
                 latest_aid, tfidf, item_id_to_row, k=pool_size, exclude=excluded,
+                include=include,
             ) or []
             similar_recs = _apply_mmr(sim_pool)
             latest_similar = {"aid": latest_aid, "recs": similar_recs}
@@ -206,14 +238,14 @@ def render_home(user):
         # Customers like you also liked: pure ALS
         cust_pool = shared.recommend_customers_like_you(
             als_model, als_item_index, als_item_to_row,
-            saved_set, excluded, k=pool_size,
+            saved_set, excluded, k=pool_size, include=include,
         )
         customers_recs = _apply_mmr(cust_pool)
         # Trending: pure popularity
-        trend_pool = shared.recommend_trending(excluded, k=pool_size)
+        trend_pool = shared.recommend_trending(excluded, k=pool_size, include=include)
         trending_recs = _apply_mmr(trend_pool)
-        # New arrivals: recency-filtered by preferences
-        new_pool = shared.recommend_new_arrivals(articles, preferences, excluded, k=pool_size)
+        # New arrivals: recency-filtered by preferences (within the curated set)
+        new_pool = shared.recommend_new_arrivals(curated_articles, preferences, excluded, k=pool_size)
         new_arrivals_recs = _apply_mmr(new_pool)
 
         # Per-rail explanation maps (rail-appropriate framing per supervisor §3.5)
@@ -362,14 +394,52 @@ def render_home(user):
     # the parallel-columns view with the live α slider.
 
 
+def _home_page():
+    """Logged-in home, wrapped as an st.navigation page target."""
+    render_home(st.session_state["user"])
+
+
 def main():
     db.init_db()
+    shared.mount_cookie_controller()   # mount once per run so set/remove work
+    shared.restore_session()           # rehydrate user from cookie (no flash)
     shared.check_session_timeout()
     user = st.session_state.get("user")
+
     if user is None:
-        render_auth_screen()
-    else:
-        render_home(user)
+        # Auth screen only — no sidebar, no page menu, no flash.
+        st.navigation(
+            [st.Page(render_auth_screen, title="Sign in", url_path="signin")],
+            position="hidden",
+        ).run()
+        return
+
+    shared.render_brand()  # project logo, top-left above the sidebar nav
+
+    role = user.get("role")
+    pages = [
+        st.Page(_home_page, title="Home", icon=":material/home:",
+                url_path="home", default=True),
+        st.Page("pages/1_Catalogue.py", title="Catalogue",
+                icon=":material/storefront:", url_path="catalogue"),
+        st.Page("pages/2_Wishlist.py", title="Wishlist",
+                icon=":material/favorite:", url_path="wishlist"),
+        st.Page("pages/3_Evaluation.py", title="Evaluation",
+                icon=":material/insights:", url_path="evaluation"),
+        st.Page("pages/4_Compare.py", title="Compare",
+                icon=":material/compare_arrows:", url_path="compare"),
+    ]
+    if role in ("admin", "analyst"):
+        pages.append(st.Page("pages/_analytics.py", title="Analytics",
+                             icon=":material/bar_chart:", url_path="analytics"))
+    if role == "admin":
+        pages.append(st.Page("pages/_admin.py", title="Admin",
+                             icon=":material/shield_person:", url_path="admin"))
+    # Product detail — reachable via st.switch_page("pages/_product.py") from
+    # cards, but its menu entry is hidden via CSS (a[href$="/product"]).
+    pages.append(st.Page("pages/_product.py", title="Product", url_path="product"))
+
+    st.navigation(pages, position="sidebar").run()
 
 
 main()

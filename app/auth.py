@@ -8,6 +8,7 @@ and reusable from CLI scripts (e.g. seeding an admin user).
 from __future__ import annotations
 
 import re
+import secrets
 import sqlite3
 
 import bcrypt
@@ -20,6 +21,15 @@ MIN_PASSWORD_LEN = 8
 ALLOWED_ROLES = ("customer", "admin", "analyst")
 MAX_FAILED_ATTEMPTS = 5
 LOCKOUT_WINDOW_MINUTES = 15
+
+
+SESSION_COOKIE_NAME = "hm_session"
+SESSION_TTL_DAYS = 30
+
+
+def new_session_token() -> str:
+    """Opaque, unguessable session token stored in the browser cookie."""
+    return secrets.token_urlsafe(32)
 
 
 class AuthError(Exception):
