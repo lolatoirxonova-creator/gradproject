@@ -129,6 +129,14 @@ def main():
             price_html = f"${reg:,.2f}"
         st.markdown(f"<h2 style='margin:4px 0 12px 0 !important;'>{price_html}</h2>",
                     unsafe_allow_html=True)
+        # compare toggle (public — guests can compare too)
+        _in_cmp = shared.in_compare(article_id)
+        if st.button("⚖  In compare" if _in_cmp else "⚖  Add to compare",
+                     type=("primary" if _in_cmp else "secondary"),
+                     use_container_width=True, key="prod_compare"):
+            shared.toggle_compare(article_id)
+            st.rerun()
+
         if guest:
             if st.button("🔒  Sign in to buy", type="primary", use_container_width=True, key="prod_signin"):
                 _go_signin()

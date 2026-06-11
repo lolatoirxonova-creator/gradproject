@@ -18,7 +18,7 @@ from app import db
 
 EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$")
 MIN_PASSWORD_LEN = 8
-ALLOWED_ROLES = ("customer", "admin", "analyst")
+ALLOWED_ROLES = ("customer", "admin", "analyst", "seller")
 MAX_FAILED_ATTEMPTS = 5
 LOCKOUT_WINDOW_MINUTES = 15
 
@@ -182,6 +182,15 @@ DEMO_ACCOUNTS = [
         "scenario": "analyst — Analytics dashboard, no Admin panel",
     },
     {
+        "email": "demo_seller@example.com",
+        "password": "Seller2026!",
+        "display_name": "Demo Seller",
+        "role": "seller",
+        "preferences": [],
+        "saves_n": 0,
+        "scenario": "seller — manages own product listings, sees orders for them",
+    },
+    {
         "email": "cold_user@example.com",
         "password": "Cold2026!",
         "display_name": "Cold User",
@@ -190,6 +199,21 @@ DEMO_ACCOUNTS = [
         "saves_n": 0,
         "scenario": "cold-start — no preferences, no saves, demonstrates fallback",
     },
+]
+
+
+# Sample listings so the seller panel isn't empty on a fresh demo database.
+DEMO_SELLER_PRODUCTS = [
+    {"prod_name": "Velora Rose Hand Cream", "brand": "Velora", "category": "Hair & body",
+     "product_type_name": "Hand Cream", "index_group_name": "Women", "colour_group_name": "Pink",
+     "quality": "Premium", "size": "75ml", "made_in": "Uzbekistan", "price": 18.0,
+     "sale_price": 14.0, "detail_desc": "Nourishing rose-scented hand cream that hydrates dry skin.",
+     "image_url": None},
+    {"prod_name": "Velora Citrus Eau de Parfum", "brand": "Velora", "category": "Fragrance",
+     "product_type_name": "Eau de Parfum", "index_group_name": "Unisex", "colour_group_name": "Amber",
+     "quality": "Luxury", "size": "50ml", "made_in": "France", "price": 64.0, "sale_price": None,
+     "detail_desc": "A bright, long-lasting citrus and amber fragrance for everyday wear.",
+     "image_url": None},
 ]
 
 
@@ -235,6 +259,10 @@ def seed_demo_accounts(articles_df=None) -> list[dict]:
             )
             for aid in sample["article_id"].tolist():
                 db.log_interaction(user["id"], str(aid), "save")
+
+        if acc["role"] == "seller" and not db.list_seller_products(user["id"]):
+            for prod in DEMO_SELLER_PRODUCTS:
+                db.add_seller_product(user["id"], prod)
 
         seeded.append({"email": acc["email"], "status": "created"})
     return seeded

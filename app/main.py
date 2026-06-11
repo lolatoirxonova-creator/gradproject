@@ -250,6 +250,47 @@ def _render_cosmetics_home(user):
         cart_set=cart_set,
     )
 
+    # ---------- AI shopping assistant (#10) ----------
+    _render_assistant(catalogue, uid, saved_set, liked, disliked, cart_set)
+
+
+def _render_assistant(catalogue, uid, saved_set, liked, disliked, cart_set):
+    """Rule-based beauty assistant — free-text + quick chips, returns product picks."""
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    st.markdown('<div class="pill">✦  Ask Chiroyli</div>', unsafe_allow_html=True)
+    st.markdown('<p class="subtitle">Your beauty assistant.</p>', unsafe_allow_html=True)
+    st.markdown('<p class="muted">Try “a hydrating serum for dry skin under $30”, '
+                "“a luxury gift for her”, or “something on sale”.</p>", unsafe_allow_html=True)
+
+    history = st.session_state.setdefault("assistant_history", [])
+
+    # quick-start chips
+    chip_cols = st.columns(len(shared._ASSIST_QUICK))
+    for col, chip in zip(chip_cols, shared._ASSIST_QUICK):
+        if col.button(chip, key=f"asst_chip_{chip}", use_container_width=True):
+            st.session_state["assistant_pending"] = chip
+            st.rerun()
+
+    # replay the conversation
+    for turn in history:
+        with st.chat_message(turn["role"], avatar=("💄" if turn["role"] == "assistant" else "🧑")):
+            st.markdown(turn["text"])
+            if turn.get("ids"):
+                shared.render_rec_cards(
+                    turn["ids"], catalogue, key_prefix=f"asst_t{turn['n']}",
+                    user_id=uid, saved_set=saved_set, liked_set=liked,
+                    disliked_set=disliked, cart_set=cart_set,
+                )
+
+    typed = st.chat_input("Ask for a product…")
+    prompt = typed or st.session_state.pop("assistant_pending", None)
+    if prompt:
+        reply, ids = shared.cosmetics_assistant_reply(prompt, catalogue)
+        n = len([t for t in history if t["role"] == "assistant"])
+        history.append({"role": "user", "text": prompt, "n": n})
+        history.append({"role": "assistant", "text": reply, "ids": ids, "n": n})
+        st.rerun()
+
 
 def render_home(user):
     shared.apply_css()
@@ -547,11 +588,14 @@ def main():
         signin = st.Page(render_auth_screen, title="Sign in",
                          icon=":material/login:", url_path="signin")
         st.session_state["_signin_page"] = signin
+        cmp_n = len(shared.compare_ids())
         st.navigation([
             st.Page(_home_page, title="Home", icon=":material/home:",
                     url_path="home", default=True),
             st.Page("pages/1_Catalogue.py", title="Catalogue",
                     icon=":material/storefront:", url_path="catalogue"),
+            st.Page("pages/_compare.py", title=f"Compare ({cmp_n})" if cmp_n else "Compare",
+                    icon=":material/balance:", url_path="compare"),
             st.Page("pages/_product.py", title="Product", url_path="product"),
             signin,
         ], position="sidebar").run()
@@ -566,27 +610,36 @@ def main():
             st.Page("pages/_admin.py", title="Admin",
                     icon=":material/shield_person:", url_path="admin"),
         ]
+    elif role == "seller":
+        # Sellers are a back-office role — manage their own listings + see orders.
+        pages = [
+            st.Page("pages/_seller.py", title="Seller panel",
+                    icon=":material/store:", url_path="seller", default=True),
+        ]
     else:
         n_cart = db.cart_count(user["id"])
         cart_title = f"Cart ({n_cart})" if n_cart else "Cart"
+        cmp_n = len(shared.compare_ids())
         pages = [
             st.Page(_home_page, title="Home", icon=":material/home:",
                     url_path="home", default=True),
             st.Page("pages/1_Catalogue.py", title="Catalogue",
                     icon=":material/storefront:", url_path="catalogue"),
+            st.Page("pages/_compare.py", title=f"Compare ({cmp_n})" if cmp_n else "Compare",
+                    icon=":material/balance:", url_path="compare"),
             st.Page("pages/2_Wishlist.py", title="Wishlist",
                     icon=":material/favorite:", url_path="wishlist"),
             st.Page("pages/_cart.py", title=cart_title,
                     icon=":material/shopping_bag:", url_path="cart"),
         ]
-        # Research pages (Evaluation/Compare/Analytics) are for the analyst role,
+        # Research pages (Evaluation/Algorithms/Analytics) are for the analyst role,
         # not the customer-facing shopping experience.
         if role == "analyst":
             pages += [
                 st.Page("pages/3_Evaluation.py", title="Evaluation",
                         icon=":material/insights:", url_path="evaluation"),
-                st.Page("pages/4_Compare.py", title="Compare",
-                        icon=":material/compare_arrows:", url_path="compare"),
+                st.Page("pages/4_Compare.py", title="Algorithms",
+                        icon=":material/compare_arrows:", url_path="algo-compare"),
                 st.Page("pages/_analytics.py", title="Analytics",
                         icon=":material/bar_chart:", url_path="analytics"),
             ]

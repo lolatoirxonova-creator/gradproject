@@ -135,6 +135,31 @@ CREATE TABLE IF NOT EXISTS notifications (
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, created_at DESC);
+
+-- Seller-listed products (Chiroyli marketplace). The base cosmetics catalogue
+-- ships as a static CSV; products added by sellers live here and are unioned
+-- into the catalogue at load time. `active=0` hides a product without deleting.
+CREATE TABLE IF NOT EXISTS seller_products (
+    article_id        TEXT    PRIMARY KEY,
+    seller_id         INTEGER NOT NULL,
+    prod_name         TEXT    NOT NULL,
+    brand             TEXT,
+    category          TEXT,
+    product_type_name TEXT,
+    index_group_name  TEXT,
+    colour_group_name TEXT,
+    quality           TEXT,
+    size              TEXT,
+    made_in           TEXT,
+    price             REAL    NOT NULL,
+    sale_price        REAL,
+    detail_desc       TEXT,
+    image_url         TEXT,
+    active            INTEGER NOT NULL DEFAULT 1,
+    created_at        TEXT    NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (seller_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_seller_products_seller ON seller_products(seller_id, created_at DESC);
 """
 
 # Round-robin order — also the canonical algorithm keys used across the app.
@@ -188,19 +213,46 @@ def init_db() -> None:
             """)
             conn.commit()
 
-        # Migration: extend users.role CHECK to allow 'analyst' (added Day 4).
-        # NOTE: SQLite updates FK references in OTHER tables when you rename a
-        # table — i.e. `ALTER TABLE users RENAME TO users_old` retargets
-        # preferences.user_id and interactions.user_id to point at users_old.
-        # We work around this by setting `PRAGMA legacy_alter_table=ON` (which
-        # disables the cascading FK rewrite), then by ALSO repairing any FKs
-        # that got broken by past migrations that didn't set the pragma.
-        sql_row = conn.execute(
+    # Relax users.role CHECK to cover all roles + repair any child FK a prior
+    # RENAME-based migration retargeted to a temp users table. Runs on its own
+    # autocommit connection (see _migrate_user_role for why).
+    _migrate_user_role()
+
+    purge_expired_sessions()
+    backfill_buckets()
+
+
+def _migrate_user_role() -> None:
+    """Ensure users.role CHECK allows every ALLOWED_ROLE and repair broken FKs.
+
+    Adding a value to a CHECK constraint in SQLite requires rebuilding the table
+    (rename → create → copy → drop). That RENAME cascades into *other* tables'
+    foreign-key definitions — retargeting them to the temp `users_old` table —
+    UNLESS both `legacy_alter_table=ON` and `foreign_keys=OFF` are set. Those
+    pragmas are ignored inside a transaction, so this uses a dedicated
+    autocommit connection. It also fixes databases already broken by an earlier
+    migration that lacked the `foreign_keys=OFF` guard, by rewriting any table
+    whose schema still references `users_old` back to `users`.
+    """
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.isolation_level = None  # autocommit — pragmas below take effect at once
+    try:
+        users_sql = conn.execute(
             "SELECT sql FROM sqlite_master WHERE type='table' AND name='users'"
         ).fetchone()
-        if sql_row and "'analyst'" not in (sql_row[0] or ""):
+        users_ok = users_sql and "'seller'" in (users_sql["sql"] or "")
+        broken = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name != 'users' AND sql LIKE '%users_old%' LIMIT 1"
+        ).fetchone()
+        if users_ok and not broken:
+            return
+
+        conn.execute("PRAGMA foreign_keys=OFF")
+        conn.execute("PRAGMA legacy_alter_table=ON")
+        if not users_ok:
             conn.executescript("""
-                PRAGMA legacy_alter_table=ON;
                 ALTER TABLE users RENAME TO users_old;
                 CREATE TABLE users (
                     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -208,41 +260,26 @@ def init_db() -> None:
                     password_hash   TEXT    NOT NULL,
                     display_name    TEXT    NOT NULL,
                     role            TEXT    NOT NULL DEFAULT 'customer'
-                                    CHECK (role IN ('customer','admin','analyst')),
+                                    CHECK (role IN ('customer','admin','analyst','seller')),
                     created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
                 );
                 INSERT INTO users SELECT * FROM users_old;
                 DROP TABLE users_old;
-                PRAGMA legacy_alter_table=OFF;
             """)
-            conn.commit()
-
-        # Repair: if a previous migration left preferences.user_id or
-        # interactions.user_id pointing at users_old (or any name other than
-        # users), rebuild the table with the correct FK.
-        for table, schema_sql in [
-            ("preferences", """
-                CREATE TABLE preferences (
-                    user_id     INTEGER NOT NULL,
-                    category    TEXT    NOT NULL,
-                    PRIMARY KEY (user_id, category),
-                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-                )
-            """),
-        ]:
-            fks = conn.execute(f"PRAGMA foreign_key_list({table})").fetchall()
-            broken = any(r["table"] != "users" for r in fks)
-            if broken:
-                conn.executescript(f"""
-                    ALTER TABLE {table} RENAME TO {table}_broken_fk;
-                    {schema_sql};
-                    INSERT INTO {table} SELECT * FROM {table}_broken_fk;
-                    DROP TABLE {table}_broken_fk;
-                """)
-                conn.commit()
-
-    purge_expired_sessions()
-    backfill_buckets()
+        # Repair child tables whose FK still references a renamed users table.
+        for row in conn.execute(
+            "SELECT name, sql FROM sqlite_master WHERE type='table' "
+            "AND name != 'users' AND sql LIKE '%users_old%'"
+        ).fetchall():
+            name, fixed = row["name"], row["sql"].replace("users_old", "users")
+            conn.executescript(
+                f"ALTER TABLE {name} RENAME TO _mig_{name};\n{fixed};\n"
+                f"INSERT INTO {name} SELECT * FROM _mig_{name};\nDROP TABLE _mig_{name};"
+            )
+        conn.execute("PRAGMA legacy_alter_table=OFF")
+        conn.execute("PRAGMA foreign_keys=ON")
+    finally:
+        conn.close()
 
 
 def create_session(token: str, user_id: int, ttl_days: int = 30) -> None:
@@ -965,6 +1002,139 @@ def positive_platform_interactions() -> list[tuple[int, str]]:
         elif r["event_type"] in ("unsave", "unlike"):
             state.pop(key, None)
     return list(state.keys())
+
+
+# ---------- seller products (marketplace) ----------
+
+# Columns a seller controls (the rest of the catalogue schema is derived in
+# shared.load_cosmetics). `article_id`, `seller_id`, timestamps are managed here.
+SELLER_PRODUCT_FIELDS = (
+    "prod_name", "brand", "category", "product_type_name", "index_group_name",
+    "colour_group_name", "quality", "size", "made_in", "price", "sale_price",
+    "detail_desc", "image_url",
+)
+
+
+def next_seller_article_id() -> str:
+    """Mint the next seller article id (S0001, S0002, …) — distinct from the
+    CSV catalogue's C-prefixed ids so the two never collide."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT article_id FROM seller_products WHERE article_id LIKE 'S%' "
+            "ORDER BY CAST(SUBSTR(article_id, 2) AS INTEGER) DESC LIMIT 1"
+        ).fetchone()
+    n = (int(row["article_id"][1:]) + 1) if row else 1
+    return f"S{n:04d}"
+
+
+def add_seller_product(seller_id: int, data: dict) -> str:
+    """Insert a new seller product; returns the minted article_id."""
+    aid = next_seller_article_id()
+    cols = ", ".join(SELLER_PRODUCT_FIELDS)
+    ph = ", ".join("?" for _ in SELLER_PRODUCT_FIELDS)
+    vals = [data.get(f) for f in SELLER_PRODUCT_FIELDS]
+    with get_conn() as conn:
+        conn.execute(
+            f"INSERT INTO seller_products(article_id, seller_id, {cols}) VALUES (?, ?, {ph})",
+            [aid, seller_id, *vals],
+        )
+        conn.commit()
+    return aid
+
+
+def update_seller_product(article_id: str, seller_id: int, data: dict) -> bool:
+    """Update a product the seller owns. Returns False if it isn't theirs."""
+    sets = ", ".join(f"{f} = ?" for f in SELLER_PRODUCT_FIELDS)
+    vals = [data.get(f) for f in SELLER_PRODUCT_FIELDS]
+    with get_conn() as conn:
+        cur = conn.execute(
+            f"UPDATE seller_products SET {sets} WHERE article_id = ? AND seller_id = ?",
+            [*vals, str(article_id), seller_id],
+        )
+        conn.commit()
+    return cur.rowcount > 0
+
+
+def set_seller_product_active(article_id: str, seller_id: int, active: bool) -> bool:
+    """Show/hide a seller's product without deleting it."""
+    with get_conn() as conn:
+        cur = conn.execute(
+            "UPDATE seller_products SET active = ? WHERE article_id = ? AND seller_id = ?",
+            (1 if active else 0, str(article_id), seller_id),
+        )
+        conn.commit()
+    return cur.rowcount > 0
+
+
+def delete_seller_product(article_id: str, seller_id: int) -> bool:
+    with get_conn() as conn:
+        cur = conn.execute(
+            "DELETE FROM seller_products WHERE article_id = ? AND seller_id = ?",
+            (str(article_id), seller_id),
+        )
+        conn.commit()
+    return cur.rowcount > 0
+
+
+def list_seller_products(seller_id: int) -> list[dict]:
+    """All of a seller's products (active + hidden), newest first."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM seller_products WHERE seller_id = ? ORDER BY created_at DESC, article_id DESC",
+            (seller_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def active_seller_products() -> list[dict]:
+    """Every active seller product — unioned into the catalogue at load time."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM seller_products WHERE active = 1 ORDER BY created_at, article_id"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def seller_orders(seller_id: int) -> list[dict]:
+    """Order line items for this seller's products, newest first.
+    Each row: {order_id, status, created_at, buyer, article_id, prod_name, quantity, unit_price}."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT o.id AS order_id, o.status, o.created_at,
+                   u.display_name AS buyer,
+                   oi.article_id, sp.prod_name, oi.quantity, oi.unit_price
+            FROM order_items oi
+            JOIN seller_products sp ON sp.article_id = oi.article_id
+            JOIN orders o ON o.id = oi.order_id
+            JOIN users  u ON u.id = o.user_id
+            WHERE sp.seller_id = ?
+            ORDER BY o.created_at DESC, o.id DESC
+            """,
+            (seller_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def seller_stats(seller_id: int) -> dict:
+    """{products, active, units_sold, revenue} for a seller's dashboard."""
+    with get_conn() as conn:
+        p = conn.execute(
+            "SELECT COUNT(*) AS n, COALESCE(SUM(active),0) AS act "
+            "FROM seller_products WHERE seller_id = ?", (seller_id,),
+        ).fetchone()
+        s = conn.execute(
+            """
+            SELECT COALESCE(SUM(oi.quantity),0) AS units,
+                   COALESCE(SUM(oi.quantity * oi.unit_price),0) AS revenue
+            FROM order_items oi
+            JOIN seller_products sp ON sp.article_id = oi.article_id
+            WHERE sp.seller_id = ?
+            """,
+            (seller_id,),
+        ).fetchone()
+    return {"products": int(p["n"]), "active": int(p["act"]),
+            "units_sold": int(s["units"]), "revenue": round(float(s["revenue"]), 2)}
 
 
 if __name__ == "__main__":

@@ -45,6 +45,31 @@ def curated_set() -> set:
     return set(curated_ids())
 
 
+# ---------- product comparison (Asaxiy-style, session-scoped) ----------
+COMPARE_MAX = 4
+
+
+def compare_ids() -> list:
+    return st.session_state.get("compare_ids", [])
+
+
+def in_compare(article_id: str) -> bool:
+    return str(article_id) in compare_ids()
+
+
+def toggle_compare(article_id: str) -> None:
+    aid = str(article_id)
+    lst = list(compare_ids())
+    if aid in lst:
+        lst.remove(aid)
+    elif len(lst) < COMPARE_MAX:
+        lst.append(aid)
+    else:
+        st.toast(f"Compare holds up to {COMPARE_MAX} items — remove one first.", icon="⚖️")
+        return
+    st.session_state["compare_ids"] = lst
+
+
 def render_brand() -> None:
     """Project logo in the sidebar's top-left (above the nav) via st.logo.
 
@@ -305,6 +330,11 @@ def _resolve_image_src(article_id: str, item: dict | None,
     """
     aid = str(article_id)
     import base64
+    # Tier 0: seller-provided image URL (marketplace listings have no committed photo).
+    if item:
+        u = item.get("image_url")
+        if isinstance(u, str) and u.strip().startswith(("http://", "https://", "data:")):
+            return u.strip()
     # Tier 0a: committed cosmetics product photo (Chiroyli catalogue).
     cos = ASSETS_DIR / "cosmetics" / f"{aid}.jpg"
     if cos.exists():
@@ -884,7 +914,38 @@ def cosmetics_mode() -> bool:
 
 @st.cache_resource(show_spinner="Loading catalogue…")
 def load_cosmetics() -> pd.DataFrame:
-    return pd.read_csv(COSMETICS_CSV, dtype={"article_id": str})
+    base = pd.read_csv(COSMETICS_CSV, dtype={"article_id": str})
+    sellers = db.active_seller_products()
+    if not sellers:
+        return base
+    # Map seller rows onto the full catalogue schema (derive the columns the
+    # CSV carries but sellers don't set, so filters / TF-IDF keep working).
+    rows = []
+    for s in sellers:
+        rows.append({
+            "article_id": str(s["article_id"]), "prod_name": s["prod_name"],
+            "brand": s["brand"], "category": s["category"],
+            "product_type_name": s["product_type_name"],
+            "product_group_name": s["category"], "section_name": s["category"],
+            "department_name": s["category"], "garment_group_name": s["product_type_name"],
+            "index_group_name": s["index_group_name"],
+            "colour_group_name": s["colour_group_name"],
+            "perceived_colour_master_name": s["colour_group_name"],
+            "quality": s["quality"], "size": s["size"], "made_in": s["made_in"],
+            "price": s["price"], "sale_price": s["sale_price"],
+            "detail_desc": s["detail_desc"], "image_query": s["prod_name"],
+            "image_url": s["image_url"],
+        })
+    seller_df = pd.DataFrame(rows).reindex(columns=list(base.columns) + ["image_url"])
+    if "image_url" not in base.columns:
+        base = base.assign(image_url=None)
+    return pd.concat([base, seller_df], ignore_index=True)
+
+
+def refresh_catalogue() -> None:
+    """Flush cached catalogue + derived TF-IDF after a seller mutates products."""
+    load_cosmetics.clear()
+    _cosmetics_tfidf.clear()
 
 
 def load_articles() -> pd.DataFrame:
@@ -1268,6 +1329,181 @@ def recommend_cosmetics(seed_ids=None, prefs=None, k: int = 12, exclude=None):
 
     out = [(a, s) for a, s in scored if a not in exclude][:k]
     return out
+
+
+# ---------------------------------------------------------------- assistant (#10)
+# Concern keyword -> substrings looked for in product name / type / description.
+_ASSIST_CONCERNS = {
+    "dry": ["hydrat", "moistur", "nourish", "hyaluronic"],
+    "hydrat": ["hydrat", "moistur", "hyaluronic"],
+    "moistur": ["hydrat", "moistur", "cream"],
+    "oily": ["oil-free", "matte", "clarify", "balanc"],
+    "acne": ["blemish", "clarify", "salicylic", "purify"],
+    "anti-aging": ["firm", "retinol", "wrinkle", "renew", "lift"],
+    "aging": ["firm", "retinol", "wrinkle", "renew", "lift"],
+    "wrinkle": ["firm", "retinol", "renew"],
+    "bright": ["bright", "glow", "radian", "vitamin c", "luminous"],
+    "glow": ["glow", "radian", "luminous", "dewy"],
+    "dull": ["bright", "glow", "radian"],
+    "sensitive": ["gentle", "soothing", "calm", "fragrance-free"],
+    "soothing": ["gentle", "soothing", "calm"],
+    "redness": ["calm", "soothing", "gentle"],
+    "volume": ["volume", "thicken", "plump"],
+    "frizz": ["smooth", "frizz", "anti-frizz"],
+}
+_ASSIST_QUICK = ["Gift for her", "Something on sale", "Hydrating skincare", "A nice perfume"]
+
+
+def cosmetics_assistant_reply(query: str, catalogue=None):
+    """Rule-based shopping assistant (#10) — no external LLM.
+
+    Parses free text for category / product type / brand / shade / made-in /
+    audience / quality / price-cap / on-sale / gift / skin-concern intents,
+    scores every product by how many signals it matches, and returns
+    ``(reply_text, [article_ids])`` (up to 4 ids). Falls back to the cold-start
+    featured order when nothing matches.
+    """
+    import re
+
+    df = (catalogue if catalogue is not None else load_articles()).copy()
+    q = (query or "").lower().strip()
+    if not q:
+        return ("Tell me what you're after — a category, a concern, a budget, "
+                "or a gift idea. Try the chips above to get started.", [])
+
+    tokens = set(re.findall(r"[a-z']+", q))
+    if tokens & {"hi", "hello", "hey", "salom", "help"} and len(tokens) <= 2:
+        return ("Hi! I can help you find products. Tell me a category (skincare, "
+                "makeup, fragrance, hair & body), a concern (dry skin, anti-aging, "
+                "oily), a budget (\"under $30\"), or who it's for (\"a gift for her\").", [])
+
+    def vals(col):
+        return {str(v) for v in df[col].dropna()} if col in df.columns else set()
+
+    cats = {c.lower(): c for c in vals("category")}
+    types = {t.lower(): t for t in vals("product_type_name")}
+    brands = {b.lower(): b for b in vals("brand")}
+    shades = {s.lower(): s for s in vals("colour_group_name")}
+    made = {m.lower(): m for m in vals("made_in")}
+
+    want_cat = [v for k, v in cats.items() if k in q]
+    want_type = [v for k, v in types.items() if k in q]
+    want_brand = [v for k, v in brands.items() if k in q]
+    want_shade = [v for k, v in shades.items() if k in q]
+    want_made = [v for k, v in made.items() if k in q]
+    # "perfume"/"scent"/"cologne" -> Fragrance category
+    if any(w in q for w in ("perfume", "scent", "cologne", "fragrance")) and "Fragrance" not in want_cat:
+        if "Fragrance" in cats.values():
+            want_cat.append("Fragrance")
+
+    audience = None
+    if tokens & {"women", "woman", "her", "she", "female", "ladies", "mom", "mum", "girlfriend", "wife"}:
+        audience = "Women"
+    elif tokens & {"men", "man", "him", "he", "male", "dad", "boyfriend", "husband"}:
+        audience = "Men"
+    elif tokens & {"kids", "kid", "children", "child", "baby", "toddler"}:
+        audience = "Kids"
+
+    want_luxury = any(w in q for w in ("luxury", "luxe", "premium", "high end", "high-end", "splurge", "best"))
+    want_budget = any(w in q for w in ("cheap", "budget", "affordable", "inexpensive", "low cost"))
+    want_sale = any(w in q for w in ("sale", "discount", "deal", "offer", "bargain"))
+    want_gift = any(w in q for w in ("gift", "present", "for her", "for him"))
+
+    cap = None
+    m = (re.search(r"(?:under|below|less than|max|up ?to|<)\s*\$?\s*(\d+)", q)
+         or re.search(r"\$\s*(\d+)", q))
+    if m:
+        cap = float(m.group(1))
+
+    concern_terms = []
+    for kw, terms in _ASSIST_CONCERNS.items():
+        if kw in q:
+            concern_terms += terms
+
+    eff = {a: effective_price(a) for a in df["article_id"].astype(str)}
+
+    scored = []
+    for _, r in df.iterrows():
+        aid = str(r["article_id"])
+        score = 0
+        if want_cat and r.get("category") in want_cat:
+            score += 3
+        if want_type and r.get("product_type_name") in want_type:
+            score += 4
+        if want_brand and r.get("brand") in want_brand:
+            score += 3
+        if want_shade and r.get("colour_group_name") in want_shade:
+            score += 2
+        if want_made and r.get("made_in") in want_made:
+            score += 2
+        if audience:
+            ig = r.get("index_group_name")
+            if ig == audience:
+                score += 3
+            elif ig == "Unisex":
+                score += 1
+            elif audience in ("Men", "Kids"):
+                score -= 4  # gendered/age request — exclude the wrong aisle
+        if want_luxury and r.get("quality") in ("Luxury", "Premium"):
+            score += 2
+        if want_budget and r.get("quality") == "Standard":
+            score += 1
+        if want_sale and pd.notna(r.get("sale_price")):
+            score += 3
+        if want_gift and r.get("quality") in ("Luxury", "Premium"):
+            score += 1
+        if concern_terms:
+            text = " ".join(str(r.get(c, "")) for c in
+                            ("prod_name", "product_type_name", "category", "detail_desc")).lower()
+            score += 2 * sum(1 for t in concern_terms if t in text)
+        if cap is not None:
+            score += 2 if eff.get(aid, 0.0) <= cap else -6
+        scored.append((aid, score))
+
+    hits = sorted([(a, s) for a, s in scored if s > 0], key=lambda x: -x[1])
+    ids = [a for a, _ in hits[:4]]
+
+    # ---- build a natural-language summary of what was understood ----
+    bits = []
+    if audience:
+        bits.append({"Women": "for women", "Men": "for men", "Kids": "for kids"}[audience])
+    if want_cat:
+        bits.append(" / ".join(want_cat).lower())
+    if want_type:
+        bits.append(" / ".join(want_type).lower())
+    if want_brand:
+        bits.append("by " + " / ".join(want_brand))
+    if want_shade:
+        bits.append("in " + " / ".join(want_shade).lower())
+    if want_made:
+        bits.append("made in " + " / ".join(want_made))
+    if concern_terms:
+        bits.append("for that concern")
+    if want_luxury:
+        bits.append("on the luxury end")
+    if want_budget:
+        bits.append("budget-friendly")
+    if cap is not None:
+        bits.append(f"under ${cap:.0f}")
+    if want_sale:
+        bits.append("on sale")
+    if want_gift and not (want_cat or want_type):
+        bits.append("gift-worthy")
+
+    if not ids:
+        # nothing matched — fall back to featured (or on-sale if they asked)
+        ex = set()
+        fb = recommend_cosmetics(prefs=None, k=4, exclude=ex)
+        if want_sale:
+            sale = [a for a in df[df["sale_price"].notna()]["article_id"].astype(str)][:4]
+            fb = [(a, None) for a in sale] or fb
+        ids = [a for a, _ in fb][:4]
+        return ("I couldn't pin that down exactly, so here are some popular picks to "
+                "browse. Try naming a category, a concern, or a budget.", ids)
+
+    desc = " ".join(bits) if bits else "matching your request"
+    return (f"Here {'is' if len(ids) == 1 else 'are'} {len(ids)} pick"
+            f"{'' if len(ids) == 1 else 's'} {desc}:", ids)
 
 
 @st.cache_resource(show_spinner="Computing trending items (one-time)…")
@@ -1825,8 +2061,17 @@ def _render_actions(article_id: str, key_prefix: str,
     - Like+Dislike row whenever liked_set + disliked_set are passed (rec cards).
     - 'Why this?' caption when reason is passed.
     """
+    def _compare_btn(col):
+        with col:
+            on = in_compare(article_id)
+            if st.button("⚖✓" if on else "⚖", key=f"{key_prefix}_cmp_{article_id}",
+                         type="primary" if on else "secondary", use_container_width=True,
+                         help="Remove from compare" if on else "Add to compare"):
+                toggle_compare(article_id)
+                st.rerun()
+
     if user_id is not None and saved_set is not None:
-        b1, b2, b3 = st.columns([2.4, 1, 1])  # View, add-to-cart, heart
+        b1, b2, b3, b4 = st.columns([2, 1, 1, 1])  # View, add-to-cart, heart, compare
         with b1:
             if st.button("View →", key=f"{key_prefix}_view_{article_id}",
                          use_container_width=True,
@@ -1845,10 +2090,14 @@ def _render_actions(article_id: str, key_prefix: str,
                 st.rerun()
         with b3:
             _save_toggle(article_id, user_id, article_id in saved_set, key=f"{key_prefix}_save_{article_id}")
+        _compare_btn(b4)
     else:
-        if st.button("View →", key=f"{key_prefix}_view_{article_id}", use_container_width=True):
-            st.session_state["viewing_article_id"] = article_id
-            st.switch_page("pages/_product.py")
+        b1, b2 = st.columns([3, 1])  # View, compare (guest)
+        with b1:
+            if st.button("View →", key=f"{key_prefix}_view_{article_id}", use_container_width=True):
+                st.session_state["viewing_article_id"] = article_id
+                st.switch_page("pages/_product.py")
+        _compare_btn(b2)
 
     if user_id is not None and liked_set is not None and disliked_set is not None:
         _feedback_buttons(

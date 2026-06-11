@@ -1,0 +1,97 @@
+"""Product comparison (Asaxiy-style) — selected products side-by-side by spec.
+
+Items are added via the ⚖ button on cards / the product page (session-scoped,
+up to shared.COMPARE_MAX). Public — works for guests too.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT))
+
+import streamlit as st
+
+from app import db, shared
+
+# (label, dataframe column) — None column => computed (price / rating)
+ATTRS = [
+    ("Price", None), ("Rating", None), ("Brand", "brand"), ("Category", "category"),
+    ("Type", "product_type_name"), ("For", "index_group_name"), ("Shade", "colour_group_name"),
+    ("Size", "size"), ("Quality", "quality"), ("Made in", "made_in"),
+]
+
+
+def main():
+    shared.check_session_timeout()
+    user = st.session_state.get("user")  # public — guests can compare too
+
+    shared.apply_css()
+    shared.render_sidebar(user)
+
+    st.markdown('<div class="pill">Compare</div>', unsafe_allow_html=True)
+    st.markdown("<h1>Compare products.</h1>", unsafe_allow_html=True)
+
+    ids = shared.compare_ids()
+    if not ids:
+        st.markdown('<p class="subtitle">Nothing to compare yet. Tap the ⚖ button on any product '
+                    '(catalogue, home, or a product page) to add it here — up to '
+                    f'{shared.COMPARE_MAX} items.</p>', unsafe_allow_html=True)
+        if st.button("Browse catalogue", type="primary"):
+            st.switch_page("pages/1_Catalogue.py")
+        return
+
+    articles = shared.load_articles()
+    by_id = articles.set_index("article_id")
+    ids = [a for a in ids if a in by_id.index]
+
+    head = st.columns([1.2] + [2] * len(ids))
+    head[0].markdown(f'<p class="muted" style="padding-top:60px;">'
+                     f'{len(ids)} of {shared.COMPARE_MAX}</p>', unsafe_allow_html=True)
+    for i, aid in enumerate(ids):
+        item = by_id.loc[aid]
+        with head[i + 1]:
+            st.markdown(
+                f'<img src="{shared._resolve_image_src(aid, item.to_dict())}" '
+                f'style="width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:12px;">',
+                unsafe_allow_html=True,
+            )
+            st.markdown(f"**{item.get('prod_name') or aid}**")
+            if st.button("✕ Remove", key=f"cmp_rm_{aid}", use_container_width=True):
+                shared.toggle_compare(aid)
+                st.rerun()
+
+    def _value(label, aid):
+        item = by_id.loc[aid]
+        if label == "Price":
+            reg, sale = shared.catalogue_price(aid)
+            return (f"<s style='color:var(--muted);'>${reg:,.2f}</s> "
+                    f"<b style='color:var(--accent-2);'>${sale:,.2f}</b>") if sale else f"<b>${reg:,.2f}</b>"
+        if label == "Rating":
+            s = db.review_summary(aid)
+            if not s["count"]:
+                return "—"
+            full = int(round(s["avg"]))
+            return f"<span style='color:var(--accent);'>{'★' * full}{'☆' * (5 - full)}</span> {s['avg']}"
+        col = dict(ATTRS)[label]
+        v = item.get(col)
+        return "—" if v is None or str(v).strip() in ("", "nan", "—") else str(v)
+
+    for label, _col in ATTRS:
+        st.markdown('<div style="border-top:1px solid var(--border);"></div>', unsafe_allow_html=True)
+        row = st.columns([1.2] + [2] * len(ids))
+        row[0].markdown(f'<p style="color:var(--muted);font-weight:600;padding:10px 0;">{label}</p>',
+                        unsafe_allow_html=True)
+        for i, aid in enumerate(ids):
+            row[i + 1].markdown(f'<p style="padding:10px 0;font-size:14px;">{_value(label, aid)}</p>',
+                                unsafe_allow_html=True)
+
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    if st.button("Clear comparison", key="cmp_clear"):
+        st.session_state["compare_ids"] = []
+        st.rerun()
+
+
+main()
