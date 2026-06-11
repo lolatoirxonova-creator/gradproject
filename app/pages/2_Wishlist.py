@@ -35,8 +35,8 @@ def main():
 
     if not saved:
         st.markdown(
-            '<p class="subtitle">No saved items yet. Browse the catalogue or click <b>♡ Save</b> '
-            'on any recommendation to add it here. The more you save, the better the algorithms '
+            '<p class="subtitle">No saved items yet. Browse the catalogue and tap the heart '
+            'on any product to add it here. The more you save, the better the algorithms '
             'tune to your taste.</p>',
             unsafe_allow_html=True,
         )

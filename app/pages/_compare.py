@@ -36,8 +36,8 @@ def main():
 
     ids = shared.compare_ids()
     if not ids:
-        st.markdown('<p class="subtitle">Nothing to compare yet. Tap the ⚖ button on any product '
-                    '(catalogue, home, or a product page) to add it here — up to '
+        st.markdown('<p class="subtitle">Nothing to compare yet. Tap the compare button on any '
+                    'product (catalogue, home, or a product page) to add it here — up to '
                     f'{shared.COMPARE_MAX} items.</p>', unsafe_allow_html=True)
         if st.button("Browse catalogue", type="primary"):
             st.switch_page("pages/1_Catalogue.py")
@@ -67,7 +67,7 @@ def main():
                 f"{item.get('prod_name') or aid}</p>",
                 unsafe_allow_html=True,
             )
-            if st.button("✕ Remove", key=f"cmp_rm_{aid}", use_container_width=True):
+            if st.button("Remove", icon=":material/close:", key=f"cmp_rm_{aid}", use_container_width=True):
                 shared.toggle_compare(aid)
                 st.rerun()
 

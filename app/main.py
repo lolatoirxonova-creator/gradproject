@@ -37,7 +37,7 @@ def _on_login(email, password):
         st.session_state["_scroll_top"] = True  # land at the top, not mid-list (#17)
         return None
     except auth.LockedError as e:
-        return f"🔒 {e}"
+        return f"{e}"
     except auth.AuthError as e:
         # Show remaining-attempts hint so legitimate users don't trip the lockout blind
         n_failed = db.failed_attempts_in_window(email)
@@ -73,7 +73,9 @@ def render_auth_screen():
     # react to it — st.tabs switches client-side only and can't change the heading.
     is_signup = st.session_state.get("auth_mode", "Log in") == "Create account"
 
-    st.markdown('<div class="pill">✦  Barakaly — beauty, curated</div>', unsafe_allow_html=True)
+    if st.button("Back to browsing", key="auth_back", icon=":material/arrow_back:"):
+        shared.leave_signin()
+    st.markdown('<div class="pill">Barakaly — beauty, curated</div>', unsafe_allow_html=True)
     if is_signup:
         st.markdown("<h1 class='hero-headline'>Create your account.</h1>", unsafe_allow_html=True)
         st.markdown(
@@ -222,7 +224,7 @@ def _render_cosmetics_home(user):
         uid = user["id"]
 
     if guest:
-        st.markdown('<div class="pill">✦  Barakaly — beauty, curated</div>', unsafe_allow_html=True)
+        st.markdown('<div class="pill">Barakaly — beauty, curated</div>', unsafe_allow_html=True)
     else:
         st.markdown(f'<div class="pill">Welcome back, {user["display_name"]}</div>', unsafe_allow_html=True)
 
@@ -256,10 +258,10 @@ def _render_cosmetics_home(user):
 
 # Home shop-by shortcuts → jump to the catalogue pre-filtered (#6).
 _SHORTCUTS = [
-    ("🎁  Gifts for her", {"f_tag": "Women", "f_quality": ["Luxury", "Premium"]}),
-    ("🎁  Gifts for him", {"f_tag": "Men"}),
-    ("✨  Skincare", {"f_category": "Skincare"}),
-    ("🌸  Fragrance", {"f_category": "Fragrance"}),
+    ("Gifts for her", ":material/redeem:", {"f_tag": "Women", "f_quality": ["Luxury", "Premium"]}),
+    ("Gifts for him", ":material/card_giftcard:", {"f_tag": "Men"}),
+    ("Skincare", ":material/spa:", {"f_category": "Skincare"}),
+    ("Fragrance", ":material/local_florist:", {"f_category": "Fragrance"}),
 ]
 # All catalogue filter keys (persistent f_* + modal w_* + bookkeeping) — cleared
 # before applying a shortcut so the preset starts from a clean slate.
@@ -283,8 +285,8 @@ def _render_shortcuts():
     st.markdown("<h2>Shop by</h2>", unsafe_allow_html=True)
     st.markdown('<p class="muted">Jump straight to a curated edit.</p>', unsafe_allow_html=True)
     cols = st.columns(len(_SHORTCUTS))
-    for col, (label, preset) in zip(cols, _SHORTCUTS):
-        if col.button(label, key=f"sc_{label}", use_container_width=True):
+    for col, (label, icon, preset) in zip(cols, _SHORTCUTS):
+        if col.button(label, icon=icon, key=f"sc_{label}", use_container_width=True):
             _apply_shortcut(preset)
 
 
@@ -579,12 +581,18 @@ def main():
     shared.render_brand()  # project logo, top-left above the sidebar nav
 
     if user is None:
+        # Sign-in screen renders with NO sidebar (position="hidden") so submitting
+        # the login form never flashes the nav — it completes on the sign-in page,
+        # then the next run (user set) routes to the main app (#4). Entered via the
+        # guest Sign-in button / "sign in to buy" actions, which set `auth_view`.
+        if st.session_state.get("auth_view"):
+            st.navigation(
+                [st.Page(render_auth_screen, title="Sign in", url_path="signin")],
+                position="hidden",
+            ).run()
+            return
         # Public browsing (#2): guests can view Home + Catalogue + product detail;
-        # ordering / saving requires sign-in. The Sign-in page object is stashed so
-        # action buttons can st.switch_page() to it.
-        signin = st.Page(render_auth_screen, title="Sign in",
-                         icon=":material/login:", url_path="signin")
-        st.session_state["_signin_page"] = signin
+        # ordering / saving requires sign-in.
         cmp_n = len(shared.compare_ids())
         st.navigation([
             st.Page(_home_page, title="Home", icon=":material/home:",
@@ -594,7 +602,6 @@ def main():
             st.Page("pages/_compare.py", title=f"Compare ({cmp_n})" if cmp_n else "Compare",
                     icon=":material/balance:", url_path="compare"),
             st.Page("pages/_product.py", title="Product", url_path="product"),
-            signin,
         ], position="sidebar").run()
         return
 

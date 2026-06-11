@@ -82,7 +82,7 @@ def toggle_compare(article_id: str) -> None:
     elif len(lst) < COMPARE_MAX:
         lst.append(aid)
     else:
-        st.toast(f"Compare holds up to {COMPARE_MAX} items — remove one first.", icon="⚖️")
+        st.toast(f"Compare holds up to {COMPARE_MAX} items — remove one first.", icon=":material/balance:")
         return
     st.session_state["compare_ids"] = lst
     _persist_compare(lst)
@@ -133,7 +133,10 @@ def render_carousel(catalogue: "pd.DataFrame | None" = None) -> None:
         imgs = []
         for aid in ids[:3]:
             item = by_id.loc[aid].to_dict() if aid in by_id.index else None
-            imgs.append(f'<img src="{_resolve_image_src(str(aid), item, width=300, height=380)}" alt="" />')
+            src = _resolve_image_src(str(aid), item, width=300, height=380)
+            # each banner product links to its detail page (#1)
+            imgs.append(f'<a class="caro-shot" href="product?aid={aid}" target="_self">'
+                        f'<img src="{src}" alt="" /></a>')
         return "".join(imgs)
 
     all_ids = df["article_id"].astype(str).tolist()
@@ -291,6 +294,7 @@ def establish_session(user: dict) -> None:
 
 def clear_session() -> None:
     """Log out: revoke the server-side session and remove the browser cookie."""
+    st.session_state.pop("auth_view", None)  # so logout returns to public browsing, not the auth screen
     try:
         token = st.context.cookies.get(auth.SESSION_COOKIE_NAME)
     except Exception:
@@ -301,6 +305,18 @@ def clear_session() -> None:
         _cookie_controller().remove(auth.SESSION_COOKIE_NAME)
     except Exception:
         pass
+
+
+def go_signin() -> None:
+    """Send a guest to the (sidebar-less) sign-in screen."""
+    st.session_state["auth_view"] = True
+    st.rerun()
+
+
+def leave_signin() -> None:
+    """Return from the sign-in screen to public browsing."""
+    st.session_state.pop("auth_view", None)
+    st.rerun()
 
 
 def _picsum_fallback_url(article_id: str, width: int, height: int) -> str:
@@ -959,6 +975,10 @@ CUSTOM_CSS = """
     font-size: 11px; font-weight: 600;
   }
 
+  /* Guest Sign-in button — pinned top-right where the account avatar sits */
+  .st-key-guest_signin { position: fixed; top: 14px; right: 22px; z-index: 1000; width: auto !important; }
+  .st-key-guest_signin button { box-shadow: var(--shadow-2) !important; }
+
   /* ===== Whole-card click — a transparent button overlays the card (#3) ===== */
   div[class*="st-key-cw_"] { position: relative !important; }
   div[class*="st-key-cw_"] > div[data-testid="stVerticalBlock"] { gap: 0 !important; }
@@ -1016,6 +1036,8 @@ CUSTOM_CSS = """
   .carousel .slide { flex-direction: row !important; align-items: center; gap: 28px; }
   .carousel .slide .copy { flex: 0 0 40%; }
   .carousel .slide .shots { display: flex; gap: 12px; flex: 1; justify-content: flex-end; }
+  .carousel .slide .shots a.caro-shot { line-height: 0; transition: transform .2s ease; cursor: pointer; }
+  .carousel .slide .shots a.caro-shot:hover { transform: translateY(-4px); }
   .carousel .slide .shots img {
     width: 150px; height: 188px; object-fit: cover; border-radius: 14px;
     box-shadow: 0 10px 28px -10px rgba(0,0,0,0.45); border: 2px solid rgba(255,255,255,0.5);
@@ -2104,7 +2126,8 @@ def render_account_menu(user: dict) -> None:
 
         # Payment history (only roles with a storefront / orders page registered).
         if role in ("customer", "analyst"):
-            if st.button("🧾  Payment history", use_container_width=True, key="acct_orders"):
+            if st.button("Payment history", use_container_width=True, key="acct_orders",
+                         icon=":material/receipt_long:"):
                 st.switch_page("pages/_orders.py")
 
         if st.button("Log out", use_container_width=True, key="acct_logout"):
@@ -2122,7 +2145,11 @@ def render_sidebar(user: dict) -> None:
     identity + logout live in the top-right account menu (render_account_menu).
     """
     if user is None:
-        return  # guest: no account menu / docs — the nav's "Sign in" handles auth
+        # Guest: a persistent Sign-in button pinned top-right (no account menu/docs).
+        if st.button("Sign in", key="guest_signin", type="primary",
+                     icon=":material/login:"):
+            go_signin()
+        return
 
     render_account_menu(user)  # rendered in main area, pinned top-right via CSS
 
@@ -2164,10 +2191,11 @@ def render_sidebar(user: dict) -> None:
 
 
 def _save_toggle(article_id: str, user_id: int, is_saved: bool, key: str) -> None:
-    """Heart toggle. Tight icon-led label keeps the card minimal."""
-    label = "♥" if is_saved else "♡"
+    """Heart toggle. Icon-only (Material) keeps the card minimal."""
     help_msg = "Remove from wishlist" if is_saved else "Add to wishlist"
-    if st.button(label, key=key, use_container_width=True, help=help_msg):
+    if st.button("", key=key, use_container_width=True, help=help_msg,
+                 icon=(":material/favorite:" if is_saved else ":material/favorite_border:"),
+                 type=("primary" if is_saved else "secondary")):
         db.log_interaction(user_id, article_id, "unsave" if is_saved else "save")
         st.rerun()
 
@@ -2177,9 +2205,9 @@ def _feedback_buttons(article_id: str, user_id: int, liked: bool, disliked: bool
     """Mutually-exclusive thumbs row. Icon-only — text is in the tooltip."""
     c1, c2 = st.columns(2)
     with c1:
-        label = "👍" if not liked else "👍✓"
         help_msg = "Unlike" if liked else "Like — feeds the recommender"
-        if st.button(label,
+        if st.button("", icon=":material/thumb_up:",
+                     type=("primary" if liked else "secondary"),
                      key=f"{key_prefix}_like_{article_id}",
                      use_container_width=True,
                      help=help_msg):
@@ -2191,9 +2219,9 @@ def _feedback_buttons(article_id: str, user_id: int, liked: bool, disliked: bool
                 db.log_interaction(user_id, article_id, "like")
             st.rerun()
     with c2:
-        label = "🚫" if not disliked else "🚫✓"
         help_msg = "Un-hide" if disliked else "Not for me — hides from future rails"
-        if st.button(label,
+        if st.button("", icon=":material/thumb_down:",
+                     type=("primary" if disliked else "secondary"),
                      key=f"{key_prefix}_dislike_{article_id}",
                      use_container_width=True,
                      help=help_msg):
@@ -2222,7 +2250,8 @@ def _render_actions(article_id: str, key_prefix: str,
     def _compare_btn(col):
         with col:
             on = in_compare(article_id)
-            if st.button("⚖✓" if on else "⚖", key=f"{key_prefix}_cmp_{article_id}",
+            if st.button("", key=f"{key_prefix}_cmp_{article_id}",
+                         icon=(":material/balance:"),
                          type="primary" if on else "secondary", use_container_width=True,
                          help="Remove from compare" if on else "Add to compare"):
                 toggle_compare(article_id)
@@ -2234,13 +2263,14 @@ def _render_actions(article_id: str, key_prefix: str,
         b1, b2, b3 = st.columns([2, 1, 1])  # Add to cart, heart, compare
         with b1:
             in_cart = bool(cart_set) and article_id in cart_set
-            if st.button("✓  In cart" if in_cart else "🛒  Add to cart",
+            if st.button("In cart" if in_cart else "Add to cart",
                          key=f"{key_prefix}_cart_{article_id}",
+                         icon=(":material/check:" if in_cart else ":material/shopping_cart:"),
                          type="primary",
                          use_container_width=True,
                          help="In your cart — add another" if in_cart else "Add to cart"):
                 db.add_to_cart(user_id, article_id, 1)
-                st.toast("Added to cart", icon="🛒")
+                st.toast("Added to cart", icon=":material/shopping_cart:")
                 st.rerun()
         with b2:
             _save_toggle(article_id, user_id, article_id in saved_set, key=f"{key_prefix}_save_{article_id}")
@@ -2248,13 +2278,10 @@ def _render_actions(article_id: str, key_prefix: str,
     else:
         b1, b2 = st.columns([3, 1])  # Add to cart (→ sign in), compare (guest)
         with b1:
-            if st.button("🛒  Add to cart", key=f"{key_prefix}_cart_{article_id}",
+            if st.button("Add to cart", key=f"{key_prefix}_cart_{article_id}",
+                         icon=":material/shopping_cart:",
                          type="primary", use_container_width=True, help="Sign in to add to cart"):
-                page = st.session_state.get("_signin_page")
-                if page is not None:
-                    st.switch_page(page)
-                else:
-                    st.toast("Please sign in to add to cart.", icon="🔒")
+                go_signin()
         _compare_btn(b2)
 
     if user_id is not None and liked_set is not None and disliked_set is not None:
@@ -2314,7 +2341,11 @@ def _card_html(item: dict, rank: int | None = None,
         elif reg:
             price_html = f'<p class="card-price">${reg:,.2f}</p>'
     reason_html = (
-        f'<p class="card-reason"><span class="why-icon">✨</span>{reason}</p>'
+        f'<p class="card-reason"><span class="why-icon">'
+        f'<svg width="11" height="11" viewBox="0 0 24 24" fill="#C19A3E" '
+        f'style="vertical-align:-1px;margin-right:3px;">'
+        f'<path d="M12 2l2.2 5.8L20 10l-5.8 2.2L12 18l-2.2-5.8L4 10l5.8-2.2z"/></svg>'
+        f'</span>{reason}</p>'
         if reason else ""
     )
     # Article ID is internal data — only show if user has explicitly toggled it on

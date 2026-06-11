@@ -245,11 +245,11 @@ def main():
                           label_visibility="collapsed", key="cat_search")
         with s2:
             n = _active_count()
-            if st.button(f"⚙  Filters ({n})" if n else "⚙  Filters",
+            if st.button(f"Filters ({n})" if n else "Filters", icon=":material/tune:",
                          use_container_width=True, key="open_filters"):
                 _cosmetics_filter_dialog(articles, lo, hi)
         if _active_count() or st.session_state.get("cat_search", "").strip():
-            if st.button("✕  Clear filters", key="clear_inline"):
+            if st.button("Clear filters", icon=":material/close:", key="clear_inline"):
                 for k, v in FILTER_DEFAULTS.items():
                     st.session_state[k] = v
                 st.session_state["cat_search"] = ""

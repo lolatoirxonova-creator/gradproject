@@ -31,12 +31,8 @@ def _format_value(value) -> str:
 
 
 def _go_signin():
-    """Send a guest to the sign-in page (object stashed by main.py's router)."""
-    page = st.session_state.get("_signin_page")
-    if page is not None:
-        st.switch_page(page)
-    else:
-        st.toast("Please sign in to continue.", icon="🔒")
+    """Send a guest to the sidebar-less sign-in screen."""
+    shared.go_signin()
 
 
 def main():
@@ -165,14 +161,16 @@ def main():
 
         # compare toggle (public — guests can compare too)
         _in_cmp = shared.in_compare(article_id)
-        if st.button("⚖  In compare" if _in_cmp else "⚖  Add to compare",
+        if st.button("In compare" if _in_cmp else "Add to compare",
+                     icon=":material/balance:",
                      type=("primary" if _in_cmp else "secondary"),
                      use_container_width=True, key="prod_compare"):
             shared.toggle_compare(article_id)
             st.rerun()
 
         if guest:
-            if st.button("🔒  Sign in to buy", type="primary", use_container_width=True, key="prod_signin"):
+            if st.button("Sign in to buy", icon=":material/lock:", type="primary",
+                         use_container_width=True, key="prod_signin"):
                 _go_signin()
             st.caption("Browse freely — sign in to add to cart, order, or save.")
         else:
@@ -181,23 +179,27 @@ def main():
                 qty = st.number_input("Quantity", min_value=1, max_value=20, value=1, step=1,
                                       key=f"prod_qty_{article_id}", label_visibility="collapsed")
             with add_col:
-                if st.button("🛒  Add to cart", type="primary", use_container_width=True, key="prod_add_cart"):
+                if st.button("Add to cart", icon=":material/shopping_cart:", type="primary",
+                             use_container_width=True, key="prod_add_cart"):
                     db.add_to_cart(user["id"], article_id, int(qty))
-                    st.toast(f"Added {int(qty)} to cart", icon="🛒")
+                    st.toast(f"Added {int(qty)} to cart", icon=":material/shopping_cart:")
                     st.rerun()
-            if st.button("⚡  Order now — pay at our store", use_container_width=True, key="prod_order_now"):
+            if st.button("Order now — pay at our store", icon=":material/bolt:",
+                         use_container_width=True, key="prod_order_now"):
                 db.order_now(user["id"], article_id, int(qty),
                              shared.effective_price(article_id), item.get("prod_name") or "")
-                st.toast("Ordered! Check your notifications (top-right).", icon="🛍️")
+                st.toast("Ordered! Check your notifications (top-right).", icon=":material/local_mall:")
                 st.rerun()
 
             is_saved = article_id in saved_set
             if is_saved:
-                if st.button("♥ Remove from wishlist", use_container_width=True, key="prod_unsave"):
+                if st.button("Remove from wishlist", icon=":material/favorite:",
+                             use_container_width=True, key="prod_unsave"):
                     db.log_interaction(user["id"], article_id, "unsave")
                     st.rerun()
             else:
-                if st.button("♡ Add to wishlist", use_container_width=True, key="prod_save"):
+                if st.button("Add to wishlist", icon=":material/favorite_border:",
+                             use_container_width=True, key="prod_save"):
                     db.log_interaction(user["id"], article_id, "save")
                     st.rerun()
             st.caption(f"{len(saved)} item{'s' if len(saved) != 1 else ''} in your wishlist")
