@@ -55,8 +55,10 @@ def main():
         return
 
     articles = shared.load_articles()
-    _, tfidf = shared.load_content_based()
-    item_id_to_row = shared.build_item_id_to_row(articles)
+    cosmetics = shared.cosmetics_mode()
+    if not cosmetics:
+        _, tfidf = shared.load_content_based()
+        item_id_to_row = shared.build_item_id_to_row(articles)
 
     row = articles[articles["article_id"] == article_id]
     if row.empty:
@@ -109,13 +111,27 @@ def main():
             unsafe_allow_html=True,
         )
 
+        # ---------- price + quantity + add to cart ----------
+        price = shared.display_price(article_id)
+        st.markdown(f"<h2 style='margin:4px 0 12px 0 !important;'>${price:,.2f}</h2>",
+                    unsafe_allow_html=True)
+        q_col, add_col = st.columns([1, 2])
+        with q_col:
+            qty = st.number_input("Quantity", min_value=1, max_value=20, value=1, step=1,
+                                  key=f"prod_qty_{article_id}", label_visibility="collapsed")
+        with add_col:
+            if st.button("🛒  Add to cart", type="primary", use_container_width=True, key="prod_add_cart"):
+                db.add_to_cart(user["id"], article_id, int(qty))
+                st.toast(f"Added {int(qty)} to cart", icon="🛒")
+                st.rerun()
+
         is_saved = article_id in saved_set
         if is_saved:
             if st.button("♥ Remove from wishlist", use_container_width=True, key="prod_unsave"):
                 db.log_interaction(user["id"], article_id, "unsave")
                 st.rerun()
         else:
-            if st.button("♡ Add to wishlist", type="primary", use_container_width=True, key="prod_save"):
+            if st.button("♡ Add to wishlist", use_container_width=True, key="prod_save"):
                 db.log_interaction(user["id"], article_id, "save")
                 st.rerun()
         st.caption(f"{len(saved)} item{'s' if len(saved) != 1 else ''} in your wishlist")
@@ -148,15 +164,22 @@ def main():
 
         # Spec table
         st.markdown("<h2 style='font-size: 18px;'>Details</h2>", unsafe_allow_html=True)
-        spec_rows = [
-            ("Department", "department_name"),
-            ("Section", "section_name"),
-            ("Group", "product_group_name"),
-            ("Type", "product_type_name"),
-            ("Colour", "colour_group_name"),
-            ("Perceived colour", "perceived_colour_master_name"),
-            ("Garment group", "garment_group_name"),
-        ]
+        if cosmetics:
+            spec_rows = [
+                ("Brand", "brand"), ("Category", "category"), ("Type", "product_type_name"),
+                ("For", "index_group_name"), ("Shade", "colour_group_name"),
+                ("Size", "size"), ("Quality", "quality"), ("Made in", "made_in"),
+            ]
+        else:
+            spec_rows = [
+                ("Department", "department_name"),
+                ("Section", "section_name"),
+                ("Group", "product_group_name"),
+                ("Type", "product_type_name"),
+                ("Colour", "colour_group_name"),
+                ("Perceived colour", "perceived_colour_master_name"),
+                ("Garment group", "garment_group_name"),
+            ]
         spec_html = "".join(
             f'<div style="display:flex; justify-content:space-between; padding: 8px 0; '
             f'border-bottom: 1px solid #f0f0f2; font-size: 13px;">'
@@ -185,17 +208,21 @@ def main():
         unsafe_allow_html=True,
     )
 
-    similar_recs = shared.recommend_similar(
-        article_id, tfidf, item_id_to_row, k=8, exclude=excluded,
-    )
+    if cosmetics:
+        similar_recs = shared.recommend_cosmetics(seed_ids=[article_id], k=8, exclude=excluded)
+        reasons = None
+    else:
+        similar_recs = shared.recommend_similar(
+            article_id, tfidf, item_id_to_row, k=8, exclude=excluded,
+        )
+        reasons = (shared.explain_similar_to(article_id, [a for a, _ in similar_recs], articles)
+                   if similar_recs else None)
     if similar_recs:
-        similar_ids = [a for a, _ in similar_recs]
-        reasons = shared.explain_similar_to(article_id, similar_ids, articles)
         shared.render_rec_cards(
             similar_recs, articles, key_prefix=f"sim_{article_id}",
             user_id=user["id"], saved_set=saved_set,
             liked_set=liked, disliked_set=disliked,
-            reasons=reasons,
+            reasons=reasons, cart_set={l["article_id"] for l in db.get_cart(user["id"])},
         )
     else:
         st.markdown(

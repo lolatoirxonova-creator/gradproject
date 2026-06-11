@@ -1,35 +1,36 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="900" height="1240" viewBox="0 0 900 1240" fill="none">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="0.2" y2="1">
-      <stop offset="0" stop-color="#FCEFE8"/>
-      <stop offset="1" stop-color="#F4D9C9"/>
+      <stop offset="0" stop-color="#FBF3DE"/>
+      <stop offset="1" stop-color="#EAD5A0"/>
     </linearGradient>
     <radialGradient id="sun" cx="0.42" cy="0.4" r="0.62">
-      <stop offset="0" stop-color="#FF6A4D"/>
-      <stop offset="1" stop-color="#E8462A"/>
+      <stop offset="0" stop-color="#E6C878"/>
+      <stop offset="1" stop-color="#C19A3E"/>
     </radialGradient>
   </defs>
 
   <rect width="900" height="1240" fill="url(#bg)"/>
 
-  <!-- editorial focal circle + thin outer ring -->
+  <!-- editorial gold circle + thin outer ring -->
   <circle cx="470" cy="520" r="288" fill="url(#sun)"/>
-  <circle cx="470" cy="520" r="350" fill="none" stroke="#E8462A" stroke-opacity="0.16" stroke-width="2"/>
+  <circle cx="470" cy="520" r="350" fill="none" stroke="#C19A3E" stroke-opacity="0.20" stroke-width="2"/>
 
-  <!-- draped garment (soft silhouette) hanging from the hanger bar -->
-  <path d="M330 568
-           C 322 690, 300 760, 292 902
-           C 286 982, 304 1018, 366 1028
-           L 574 1028
-           C 636 1018, 654 982, 648 902
-           C 640 760, 618 690, 610 568 Z"
-        fill="#FFFFFF" fill-opacity="0.58" stroke="#1A1714" stroke-width="4" stroke-linejoin="round"/>
-  <!-- centre placket accent -->
-  <path d="M470 576 V1016" stroke="#E8462A" stroke-width="3" stroke-opacity="0.55"/>
-
-  <!-- hanger line-art (the brand mark, oversized) -->
-  <g stroke="#1A1714" stroke-width="5" fill="none" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M470 470 V432 a25 25 0 1 1 25 25"/>
-    <path d="M470 470 L302 560 a12 12 0 0 0 7 21 H631 a12 12 0 0 0 7 -21 Z"/>
+  <!-- minimalist serum dropper bottle (beauty motif), white line-art, centred -->
+  <g stroke="#ffffff" stroke-width="5" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <!-- dropper cap + bulb -->
+    <rect x="438" y="300" width="64" height="34" rx="8"/>
+    <path d="M470 334 V360"/>
+    <path d="M470 360 c -16 0 -16 22 0 22 c 16 0 16 -22 0 -22 Z" fill="#ffffff" fill-opacity="0.25"/>
+    <!-- bottle body -->
+    <path d="M408 470
+             C 408 430, 532 430, 532 470
+             L 532 720
+             C 532 792, 408 792, 408 720 Z"
+          fill="#ffffff" fill-opacity="0.30"/>
+    <!-- neck -->
+    <path d="M448 470 V440 H492 V470"/>
+    <!-- liquid line -->
+    <path d="M408 600 C 470 624, 470 576, 532 600" stroke-opacity="0.85"/>
   </g>
 </svg>

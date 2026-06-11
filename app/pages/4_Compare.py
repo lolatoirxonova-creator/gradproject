@@ -93,7 +93,7 @@ def main():
 
     # ---------- load models + state ----------
     try:
-        articles = shared.load_articles()
+        articles = shared.load_hm_articles()  # Compare runs the trained H&M models
         vectorizer, tfidf = shared.load_content_based()
         als_model, _, als_item_index = shared.load_cf()
         hybrid_cfg = shared.load_hybrid_config()

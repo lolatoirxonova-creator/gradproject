@@ -33,6 +33,8 @@ def curated_ids() -> list[str]:
     catalogue, home rails, and recommendation candidate pools are gated to these
     IDs; the full articles df is still loaded for TF-IDF row alignment.
     """
+    if cosmetics_mode():
+        return []  # cosmetics is the whole catalogue — no fashion-curated gating
     p = ASSETS_DIR / "curated_products.csv"
     if not p.exists():
         return []
@@ -81,7 +83,7 @@ def render_auth_panel() -> None:
     """
     uri = _login_art_data_uri()
     bg = (f"url('{uri}')" if uri
-          else "radial-gradient(135% 120% at 75% 12%, #ff6a4d 0%, #e8462a 48%, #c5391d 100%)")
+          else "radial-gradient(135% 120% at 75% 12%, #e6c878 0%, #c19a3e 48%, #a07e2c 100%)")
     st.markdown(
         f"""
 <style>
@@ -119,7 +121,7 @@ def render_auth_panel() -> None:
     }}
   }}
 </style>
-<div class="auth-photo"><div class="ap-brand">Wardrobe<span class="dot">.</span></div></div>
+<div class="auth-photo"><div class="ap-brand">Chiroyli<span class="dot">.</span></div></div>
 """,
         unsafe_allow_html=True,
     )
@@ -244,6 +246,11 @@ def prefetch_images_sync(items: list, max_workers: int = 6, timeout: float = 12.
     tasks: list[tuple[str, str]] = []
     for item in items:
         aid = str(item["article_id"])
+        # Skip items with a committed local photo (cosmetics / curated) — those are
+        # served by _resolve_image_src Tier 0 and need no remote fetch.
+        if (ASSETS_DIR / "cosmetics" / f"{aid}.jpg").exists() or \
+           (ASSETS_DIR / "products" / f"{aid}.jpg").exists():
+            continue
         if aid in seen or _cache_path(aid).exists():
             continue
         seen.add(aid)
@@ -275,11 +282,14 @@ def _resolve_image_src(article_id: str, item: dict | None,
     fetch (in `prefetch_images_sync`) sidesteps both issues.
     """
     aid = str(article_id)
-    # Tier 0: committed curated product photo (always wins — guarantees the
-    # image matches the product's name/category for the curated demo catalogue).
+    import base64
+    # Tier 0a: committed cosmetics product photo (Chiroyli catalogue).
+    cos = ASSETS_DIR / "cosmetics" / f"{aid}.jpg"
+    if cos.exists():
+        return f"data:image/jpeg;base64,{base64.b64encode(cos.read_bytes()).decode()}"
+    # Tier 0b: committed curated fashion photo (legacy demo catalogue).
     curated = ASSETS_DIR / "products" / f"{aid}.jpg"
     if curated.exists():
-        import base64
         return f"data:image/jpeg;base64,{base64.b64encode(curated.read_bytes()).decode()}"
     # Tier 1: locally-downloaded H&M product photos (if user has the 16 GB bundle)
     if len(aid) >= 3:
@@ -437,9 +447,9 @@ CUSTOM_CSS = """
     --border-2:  #d8d1c7;
     --bg:        #ffffff;
     --bg-soft:   #f7f4ef;       /* warm paper */
-    --accent:      #e8462a;     /* vermilion — bold, fashion-forward */
-    --accent-2:    #cf3d20;     /* darker hover */
-    --accent-soft: rgba(232,70,42,0.10);
+    --accent:      #c19a3e;     /* Chiroyli gold */
+    --accent-2:    #a07e2c;     /* darker gold — hover */
+    --accent-soft: rgba(193,154,62,0.14);
     --shadow-1:  0 1px 2px rgba(26,23,20,0.05);
     --shadow-2:  0 18px 44px -16px rgba(26,23,20,0.22);
     --display:   "Fraunces", "Times New Roman", Georgia, serif;
@@ -452,13 +462,13 @@ CUSTOM_CSS = """
     -webkit-font-smoothing: antialiased;
     background: var(--bg-soft);
   }
-  /* Faint tiling hanger motif on the warm paper — fills the page margins with a
-     subtle brand texture (sits behind all content; only visible in whitespace). */
+  /* Faint tiling gold sparkle motif on the warm cream — subtle beauty-brand
+     texture (behind all content; only visible in whitespace). */
   [data-testid="stAppViewContainer"]::before {
     content: "";
     position: fixed; inset: 0; z-index: 0; pointer-events: none;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='150' height='150' viewBox='0 0 150 150'%3E%3Cg fill='none' stroke='%231a1714' stroke-opacity='0.05' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M75 64 V58 a5 5 0 1 1 5 5'/%3E%3Cpath d='M75 64 L52 82 a2 2 0 0 0 1.3 3.6 H96.7 a2 2 0 0 0 1.3-3.6 Z'/%3E%3C/g%3E%3C/svg%3E");
-    background-size: 150px 150px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140' viewBox='0 0 140 140'%3E%3Cpath d='M70 50 C72 62 78 68 90 70 C78 72 72 78 70 90 C68 78 62 72 50 70 C62 68 68 62 70 50 Z' fill='%23c19a3e' fill-opacity='0.07'/%3E%3C/svg%3E");
+    background-size: 140px 140px;
   }
   #MainMenu, footer, [data-testid="stToolbar"], header[data-testid="stHeader"] { display: none; }
   .block-container,
@@ -486,8 +496,10 @@ CUSTOM_CSS = """
     color: var(--accent-2) !important;
     font-weight: 600;
   }
-  /* Product detail is reached from cards, not the menu — hide its nav entry. */
-  [data-testid="stSidebar"] [data-testid="stSidebarNav"] a[href$="/product"] {
+  /* Reached via buttons, not the menu — hide these nav entries. */
+  [data-testid="stSidebar"] [data-testid="stSidebarNav"] a[href$="/product"],
+  [data-testid="stSidebar"] [data-testid="stSidebarNav"] a[href$="/checkout"],
+  [data-testid="stSidebar"] [data-testid="stSidebarNav"] a[href$="/success"] {
     display: none !important;
   }
 
@@ -575,7 +587,7 @@ CUSTOM_CSS = """
     letter-spacing: -0.01em;
     box-shadow: 0 2px 8px rgba(0,0,0,0.10);
   }
-  .card-match.high  { background: var(--accent); color: #fff; }
+  .card-match.high  { background: var(--accent); color: var(--ink); }
   .card-match.mid   { background: rgba(255,255,255,0.96); color: var(--ink); }
   .card-rank-badge {
     position: absolute;
@@ -651,7 +663,7 @@ CUSTOM_CSS = """
   }
   .stButton > button[kind="primary"] {
     background: var(--accent) !important;
-    color: #ffffff !important;
+    color: var(--ink) !important;          /* ink on gold — legible + luxe */
     border-color: var(--accent) !important;
     font-weight: 600 !important;
     box-shadow: none !important;
@@ -751,7 +763,7 @@ CUSTOM_CSS = """
     border-radius: 50% !important;
     background: var(--accent) !important;
     border: 2px solid #fff !important;
-    color: #fff !important;
+    color: var(--ink) !important;
     font-weight: 700 !important; font-size: 15px !important;
     letter-spacing: 0;
     box-shadow: var(--shadow-2) !important;
@@ -764,7 +776,7 @@ CUSTOM_CSS = """
   .st-key-account_menu button p { margin: 0 !important; line-height: 1 !important; }
   .st-key-account_menu button:hover {
     transform: translateY(-1px) scale(1.04);
-    background: var(--accent-2) !important; color: #fff !important;
+    background: var(--accent-2) !important; color: var(--ink) !important;
   }
   /* drop the popover's default caret — the avatar IS the affordance.
      The caret lives in an aria-hidden wrapper that reserves width even when the
@@ -777,7 +789,7 @@ CUSTOM_CSS = """
   .acct-avatar-lg {
     width: 58px; height: 58px; margin: 0 auto 12px;
     border-radius: 50%;
-    background: var(--accent); color: #fff;
+    background: var(--accent); color: var(--ink);
     display: flex; align-items: center; justify-content: center;
     font-weight: 700; font-size: 21px;
   }
@@ -804,9 +816,29 @@ def apply_css() -> None:
 # session warm-up, so navigation feels snappy.
 
 @st.cache_resource(show_spinner="Loading product catalogue…")
-def load_articles() -> pd.DataFrame:
+def load_hm_articles() -> pd.DataFrame:
+    """The original H&M fashion catalogue — used by the analyst research pages
+    (Evaluation/Compare) and the trained models."""
     from src import data as dataio
     return dataio.load_articles()
+
+
+COSMETICS_CSV = ASSETS_DIR / "cosmetics_products.csv"
+
+
+def cosmetics_mode() -> bool:
+    """True when the generated cosmetics catalogue is present (Chiroyli's products)."""
+    return COSMETICS_CSV.exists()
+
+
+@st.cache_resource(show_spinner="Loading catalogue…")
+def load_cosmetics() -> pd.DataFrame:
+    return pd.read_csv(COSMETICS_CSV, dtype={"article_id": str})
+
+
+def load_articles() -> pd.DataFrame:
+    """Consumer catalogue: cosmetics when present, else the H&M fashion data."""
+    return load_cosmetics() if cosmetics_mode() else load_hm_articles()
 
 
 @st.cache_resource(show_spinner="Loading content-based model…")
@@ -893,17 +925,18 @@ def recommend_ncf(positives: set, excluded: set | None, k: int = 6,
         idx = item_to_idx.get(aid)
         if idx is not None:
             scores[idx] = -np.inf
-    if len(scores) <= k:
-        order = np.argsort(-scores)
-    else:
-        order = np.argpartition(-scores, k)[:k]
-        order = order[np.argsort(-scores[order])]
-    top_scores = scores[order[:k]]
+    # Rank, then keep only finite candidates (masked/excluded items are -inf and
+    # must not reach the rescale → NaN).
+    order = np.argsort(-scores)
+    order = order[np.isfinite(scores[order])][:k]
+    if len(order) == 0:
+        return []
+    top_scores = scores[order]
     if top_scores.max() - top_scores.min() < 1e-12:
         rescaled = np.ones_like(top_scores) * 0.9
     else:
         rescaled = 0.65 + 0.34 * (top_scores - top_scores.min()) / (top_scores.max() - top_scores.min())
-    return [(idx_to_item[int(i)], float(s)) for i, s in zip(order[:k], rescaled)]
+    return [(idx_to_item[int(i)], float(s)) for i, s in zip(order, rescaled)]
 
 
 @st.cache_resource(show_spinner=False)
@@ -963,7 +996,9 @@ def recommend_cb(profile, tfidf, item_id_to_row, excluded, k, include=None):
         order = np.argpartition(-scores, k)[:k]
         order = order[np.argsort(-scores[order])]
     row_to_item = {v: kk for kk, v in item_id_to_row.items()}
-    return [(row_to_item[i], float(scores[i])) for i in order[:k]]
+    # Drop masked (-inf) candidates so we never surface (or rescale) junk when
+    # the include/excluded filters leave fewer than k valid items.
+    return [(row_to_item[i], float(scores[i])) for i in order[:k] if np.isfinite(scores[i])]
 
 
 def recommend_als(model, item_index, item_to_row, positives, excluded, k, include=None):
@@ -1042,13 +1077,14 @@ def recommend_hybrid(profile, tfidf, item_id_to_row, als_model, als_item_index,
         inc_mask = np.array([c in include for c in candidate_items])
         combined = np.where(inc_mask, combined, -np.inf)
 
-    if len(combined) <= k:
-        order = np.argsort(-combined)
-    else:
-        order = np.argpartition(-combined, k)[:k]
-        order = order[np.argsort(-combined[order])]
+    # Rank, then keep only finite candidates — masked items (excluded / outside
+    # `include`) are -inf and must not reach the rescale (would produce NaN).
+    order = np.argsort(-combined)
+    order = order[np.isfinite(combined[order])][:k]
+    if len(order) == 0:
+        return []
     arr = np.array(candidate_items)
-    top_scores = combined[order[:k]]
+    top_scores = combined[order]
     # Display rescale: pull the top-k slice into a snug 0.65–0.99 band so even
     # the worst-of-rail still reads as a healthy match%. Better UX than showing
     # raw normalised scores like 0.04.
@@ -1056,7 +1092,7 @@ def recommend_hybrid(profile, tfidf, item_id_to_row, als_model, als_item_index,
         norm = np.ones_like(top_scores) * 0.9
     else:
         norm = 0.65 + 0.34 * (top_scores - top_scores.min()) / (top_scores.max() - top_scores.min())
-    return [(str(a), float(s)) for a, s in zip(arr[order[:k]], norm)]
+    return [(str(a), float(s)) for a, s in zip(arr[order], norm)]
 
 
 @st.cache_resource(show_spinner="Computing article prices (one-time)…")
@@ -1093,6 +1129,94 @@ def load_article_prices() -> pd.Series:
     with open(path, "wb") as f:
         pickle.dump(series, f)
     return series
+
+
+PRICE_DISPLAY_SCALE = 1000.0  # H&M-normalised price → approximate $ for display
+
+
+@st.cache_resource(show_spinner=False)
+def _cosmetics_price_map() -> dict:
+    """{article_id: (regular_price, sale_price_or_None)} from the cosmetics CSV."""
+    df = load_cosmetics()
+    out = {}
+    for r in df.itertuples():
+        sale = getattr(r, "sale_price", None)
+        sale = float(sale) if (sale is not None and str(sale).strip() not in ("", "nan")
+                               and not pd.isna(sale)) else None
+        out[str(r.article_id)] = (round(float(r.price), 2), (round(sale, 2) if sale else None))
+    return out
+
+
+def catalogue_price(article_id: str) -> tuple[float, float | None]:
+    """(regular_price, sale_price_or_None) in $ for a catalogue item."""
+    if cosmetics_mode():
+        return _cosmetics_price_map().get(str(article_id), (0.0, None))
+    return (display_price(article_id), None)
+
+
+def effective_price(article_id: str) -> float:
+    """Price actually charged — the sale price when on sale, else regular."""
+    reg, sale = catalogue_price(article_id)
+    return sale if sale is not None else reg
+
+
+def display_price(article_id: str, prices: "pd.Series | None" = None) -> float:
+    """Display price ($). Cosmetics → effective (sale-aware) price; else H&M mean × scale."""
+    if cosmetics_mode():
+        return effective_price(article_id)
+    prices = prices if prices is not None else load_article_prices()
+    try:
+        raw = prices.get(str(article_id))
+        raw = float(raw) if raw is not None and not pd.isna(raw) else 0.0
+    except Exception:
+        raw = 0.0
+    return round(raw * PRICE_DISPLAY_SCALE, 2)
+
+
+# ---------- cosmetics content recommender (trained H&M models don't apply) ----------
+
+@st.cache_resource(show_spinner=False)
+def _cosmetics_tfidf():
+    """TF-IDF over cosmetics text (brand + category + type + shade + audience + desc)."""
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    df = load_cosmetics()
+    text = (df["brand"].fillna("") + " " + df["category"].fillna("") + " "
+            + df["product_type_name"].fillna("") + " " + df["colour_group_name"].fillna("") + " "
+            + df["index_group_name"].fillna("") + " " + df["detail_desc"].fillna(""))
+    vec = TfidfVectorizer(max_features=2000, stop_words="english")
+    mat = normalize(vec.fit_transform(text.values))
+    ids = df["article_id"].astype(str).tolist()
+    return mat, ids, {a: i for i, a in enumerate(ids)}
+
+
+def recommend_cosmetics(seed_ids=None, prefs=None, k: int = 12, exclude=None):
+    """Content-based cosmetics recs → [(article_id, score)]. Profile = mean TF-IDF of
+    the user's saved/seed items (or preference categories); cold-start falls back to a
+    featured order (on-sale + premium first)."""
+    mat, ids, id_to_row = _cosmetics_tfidf()
+    df = load_cosmetics()
+    exclude = set(exclude or set())
+    rows = [id_to_row[a] for a in (seed_ids or []) if a in id_to_row]
+    if not rows and prefs:
+        mask = (df["category"].isin(prefs) | df["product_type_name"].isin(prefs)
+                | df["index_group_name"].isin(prefs))
+        rows = [id_to_row[a] for a in df[mask]["article_id"].astype(str) if a in id_to_row]
+
+    if rows:
+        profile = normalize(csr_matrix(np.asarray(mat[rows].mean(axis=0))))
+        scores = (profile @ mat.T).toarray().ravel()
+        for r in rows:
+            scores[r] = -np.inf  # don't recommend the seed items themselves
+        order = np.argsort(-scores)
+        scored = [(ids[i], float(scores[i])) for i in order if np.isfinite(scores[i])]
+    else:
+        # cold-start: featured — on-sale first, then by price desc
+        pm = _cosmetics_price_map()
+        feat = sorted(ids, key=lambda a: (pm.get(a, (0, None))[1] is None, -pm.get(a, (0, None))[0]))
+        scored = [(a, None) for a in feat]
+
+    out = [(a, s) for a, s in scored if a not in exclude][:k]
+    return out
 
 
 @st.cache_resource(show_spinner="Computing trending items (one-time)…")
@@ -1305,7 +1429,9 @@ def recommend_similar(article_id: str, tfidf, item_id_to_row, k=8, exclude=None,
         order = np.argpartition(-scores, k)[:k]
         order = order[np.argsort(-scores[order])]
     row_to_item = {v: kk for kk, v in item_id_to_row.items()}
-    return [(row_to_item[i], float(scores[i])) for i in order[:k]]
+    # Drop masked (-inf) candidates so we never surface (or rescale) junk when
+    # the include/excluded filters leave fewer than k valid items.
+    return [(row_to_item[i], float(scores[i])) for i in order[:k] if np.isfinite(scores[i])]
 
 
 # ---------- explainability ----------
@@ -1524,6 +1650,11 @@ def render_sidebar(user: dict) -> None:
     """
     render_account_menu(user)  # rendered in main area, pinned top-right via CSS
 
+    # Docs + recommender display options are a research-role affordance (analyst).
+    # Customers get a clean shopping sidebar; admins are back-office only.
+    if user.get("role") != "analyst":
+        return
+
     with st.sidebar:
         # ---------- documentation ----------
         pdf_bytes = _load_docs_pdf()
@@ -1604,7 +1735,8 @@ def _render_actions(article_id: str, key_prefix: str,
                     saved_set: set | None = None,
                     liked_set: set | None = None,
                     disliked_set: set | None = None,
-                    reason: str | None = None) -> None:
+                    reason: str | None = None,
+                    cart_set: set | None = None) -> None:
     """Render the action row(s) below a card.
 
     - View+Save row whenever user_id + saved_set are passed.
@@ -1612,7 +1744,7 @@ def _render_actions(article_id: str, key_prefix: str,
     - 'Why this?' caption when reason is passed.
     """
     if user_id is not None and saved_set is not None:
-        b1, b2 = st.columns([3, 1])  # wider View, narrow heart
+        b1, b2, b3 = st.columns([2.4, 1, 1])  # View, add-to-cart, heart
         with b1:
             if st.button("View →", key=f"{key_prefix}_view_{article_id}",
                          use_container_width=True,
@@ -1620,6 +1752,16 @@ def _render_actions(article_id: str, key_prefix: str,
                 st.session_state["viewing_article_id"] = article_id
                 st.switch_page("pages/_product.py")
         with b2:
+            in_cart = bool(cart_set) and article_id in cart_set
+            if st.button("✓" if in_cart else "🛒",
+                         key=f"{key_prefix}_cart_{article_id}",
+                         type="primary" if in_cart else "secondary",
+                         use_container_width=True,
+                         help="In your cart — add another" if in_cart else "Add to cart"):
+                db.add_to_cart(user_id, article_id, 1)
+                st.toast("Added to cart", icon="🛒")
+                st.rerun()
+        with b3:
             _save_toggle(article_id, user_id, article_id in saved_set, key=f"{key_prefix}_save_{article_id}")
     else:
         if st.button("View →", key=f"{key_prefix}_view_{article_id}", use_container_width=True):
@@ -1639,8 +1781,9 @@ def _render_actions(article_id: str, key_prefix: str,
 
 
 def _card_match_chip(score: float | None) -> str:
-    """Render the match% chip as inline HTML, or '' if no score."""
-    if score is None:
+    """Render the match% chip as inline HTML, or '' if no/invalid score."""
+    import math
+    if score is None or not math.isfinite(score):
         return ""
     pct = max(0, min(99, int(round(score * 100))))
     klass = "high" if pct >= 80 else "mid"
@@ -1703,7 +1846,8 @@ def _coerce_recs(recs) -> tuple[list[str], dict]:
 def render_rec_cards(rec_ids, articles: pd.DataFrame, key_prefix: str = "rec",
                      user_id: int | None = None, saved_set: set | None = None,
                      liked_set: set | None = None, disliked_set: set | None = None,
-                     reasons: dict | None = None, scores: dict | None = None) -> None:
+                     reasons: dict | None = None, scores: dict | None = None,
+                     cart_set: set | None = None) -> None:
     """Two-column grid of ranked recommendation cards (with rank badge)."""
     ids, inferred_scores = _coerce_recs(rec_ids)
     scores = scores if scores is not None else inferred_scores
@@ -1729,13 +1873,15 @@ def render_rec_cards(rec_ids, articles: pd.DataFrame, key_prefix: str = "rec",
                     d["article_id"], key_prefix,
                     user_id=user_id, saved_set=saved_set,
                     liked_set=liked_set, disliked_set=disliked_set,
+                    cart_set=cart_set,
                 )
 
 
 def render_catalogue_card(item: dict, key_prefix: str,
                           user_id: int | None = None, saved_set: set | None = None,
                           liked_set: set | None = None, disliked_set: set | None = None,
-                          reason: str | None = None, score: float | None = None) -> None:
+                          reason: str | None = None, score: float | None = None,
+                          cart_set: set | None = None) -> None:
     """Unranked card (used in browse/wishlist grids and rails)."""
     st.markdown(
         _card_html(item, rank=None, score=score, reason=reason),
@@ -1745,6 +1891,7 @@ def render_catalogue_card(item: dict, key_prefix: str,
         item["article_id"], key_prefix,
         user_id=user_id, saved_set=saved_set,
         liked_set=liked_set, disliked_set=disliked_set,
+        cart_set=cart_set,
     )
 
 
@@ -1752,7 +1899,7 @@ def render_rail(title: str, caption: str, recs, articles: pd.DataFrame,
                 key_prefix: str, user_id: int | None = None,
                 saved_set: set | None = None, liked_set: set | None = None,
                 disliked_set: set | None = None, reasons: dict | None = None,
-                cols: int = 3) -> None:
+                cols: int = 3, cart_set: set | None = None) -> None:
     """Product-rail layout: heading + caption + n-col grid of unranked cards.
 
     `recs` accepts either a list of article_ids or a list of (article_id, score)
@@ -1788,4 +1935,5 @@ def render_rail(title: str, caption: str, recs, articles: pd.DataFrame,
                     liked_set=liked_set, disliked_set=disliked_set,
                     reason=(reasons or {}).get(item["article_id"]),
                     score=scores.get(item["article_id"]),
+                    cart_set=cart_set,
                 )

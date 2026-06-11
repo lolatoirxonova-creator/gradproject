@@ -1,0 +1,45 @@
+name: Deploy to droplet
+
+# Auto-deploy: every push to main SSHes into the DigitalOcean droplet,
+# pulls the latest code, refreshes deps, runs DB migrations, and restarts
+# Streamlit. Mirrors the manual steps in deploy/sync.sh (code only — large
+# model/data artefacts and precomputed pickles are NOT in git and are pushed
+# separately). Can also be run manually from the Actions tab.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-droplet
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DROPLET_HOST }}
+          username: ${{ secrets.DROPLET_USER }}
+          key: ${{ secrets.DROPLET_SSH_KEY }}
+          command_timeout: 15m
+          script: |
+            set -euo pipefail
+            cd /opt/gradproject
+            echo "==> Fetching latest code"
+            git fetch --all --prune
+            git reset --hard origin/main
+            echo "==> Refreshing dependencies"
+            .venv/bin/pip install -q -r requirements.txt
+            echo "==> Running DB migrations"
+            .venv/bin/python -c "from app import db; db.init_db()"
+            echo "==> Seeding demo accounts"
+            .venv/bin/python -m app.auth seed-demos || true
+            echo "==> Restarting Streamlit"
+            systemctl restart streamlit
+            sleep 3
+            systemctl is-active streamlit
+            echo "==> Deployed commit: $(git rev-parse --short HEAD)"

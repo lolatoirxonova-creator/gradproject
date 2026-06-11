@@ -273,7 +273,7 @@ def _compute_live_diversity_metrics(sample_n: int = 30, k: int = 10):
     import pickle
 
     # Load articles + models without spinners (the page already has one)
-    articles = shared.load_articles()
+    articles = shared.load_hm_articles()  # Evaluation reports on the H&M models
     _, tfidf = shared.load_content_based()
     als_model, als_user_index, als_item_index = shared.load_cf()
     hybrid_cfg = shared.load_hybrid_config()

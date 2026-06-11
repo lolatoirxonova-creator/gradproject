@@ -1,12 +1,12 @@
 [theme]
 base = "light"
-# Bold editorial palette: warm paper + vermilion accent (2026 fashion direction).
-primaryColor = "#E8462A"
+# Chiroyli — luxe beauty palette: warm cream + gold accent.
+primaryColor = "#C19A3E"
 backgroundColor = "#FFFFFF"
-secondaryBackgroundColor = "#F7F4EF"
+secondaryBackgroundColor = "#FAF6EC"
 textColor = "#1A1714"
-borderColor = "#ECE7E0"
-linkColor = "#E8462A"
+borderColor = "#ECE7DA"
+linkColor = "#A07E2C"
 baseRadius = "0.85rem"
 buttonRadius = "2rem"
 # Fraunces (editorial display serif) for headings, Inter for body/UI — loaded via

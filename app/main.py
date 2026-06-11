@@ -20,7 +20,7 @@ import streamlit as st
 from app import auth, db, shared
 
 st.set_page_config(
-    page_title="Personalised Recommendations",
+    page_title="Chiroyli",
     page_icon="🛍️",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -71,7 +71,7 @@ def render_auth_screen():
     # react to it — st.tabs switches client-side only and can't change the heading.
     is_signup = st.session_state.get("auth_mode", "Log in") == "Create account"
 
-    st.markdown('<div class="pill">🛍️  Personalised Recommendations</div>', unsafe_allow_html=True)
+    st.markdown('<div class="pill">✦  Chiroyli — beauty, curated</div>', unsafe_allow_html=True)
     if is_signup:
         st.markdown("<h1 class='hero-headline'>Create your account.</h1>", unsafe_allow_html=True)
         st.markdown(
@@ -81,11 +81,10 @@ def render_auth_screen():
             unsafe_allow_html=True,
         )
     else:
-        st.markdown("<h1 class='hero-headline'>Built to learn what you actually wear.</h1>", unsafe_allow_html=True)
+        st.markdown("<h1 class='hero-headline'>Beauty, curated for you.</h1>", unsafe_allow_html=True)
         st.markdown(
-            '<p class="subtitle">Log in to get recommendations from four learned models — '
-            'content-based, collaborative filtering, hybrid, and neural — tuned to your saved '
-            'items and preferences.</p>',
+            '<p class="subtitle">Log in to get personalised cosmetics picks — skincare, makeup, '
+            'fragrance and more — tuned to your taste and saved items.</p>',
             unsafe_allow_html=True,
         )
 
@@ -135,11 +134,107 @@ def render_auth_screen():
 RAIL_SIZE = 6   # items per rail (3 columns x 2 rows)
 POOL_MULT = 4   # request POOL_MULT × RAIL_SIZE candidates so MMR can diversify
 LAMBDA_MMR = 0.7  # 1.0 = pure relevance; 0.0 = pure diversity
+ALGO_HOME_SIZE = 12  # fuller single-rail grid for A/B/n-bucketed users
+
+
+def _render_single_algo_home(algo, user, articles, tfidf, vectorizer,
+                             als_model, als_item_index, als_item_to_row, candidate_items,
+                             item_id_to_row, saved, saved_set, liked, disliked, preferences,
+                             excluded, best_alpha, include, mmr_on, cart_set=None):
+    """Render a home driven by ONE algorithm for an A/B/n-bucketed customer.
+
+    All of the user's engagement is therefore attributable to `algo`. Cold-start
+    algorithms (ALS/NeuMF need saved items) show an empty-state prompt.
+    """
+    pool_n = ALGO_HOME_SIZE * (POOL_MULT if mmr_on else 1)
+    reasons: dict = {}
+    profile = None
+    if algo in ("content", "hybrid"):
+        profile = shared.build_user_profile(saved, preferences, articles, tfidf, item_id_to_row)
+
+    if algo == "content":
+        pool = shared.recommend_cb(profile, tfidf, item_id_to_row, excluded, pool_n, include=include) or []
+        if profile is not None:
+            reasons = shared.explain_cb_for_items(profile, [a for a, _ in pool], tfidf, item_id_to_row, vectorizer)
+        empty_msg = "Set a few style preferences in your profile (or save items) to get content-based picks."
+    elif algo == "als":
+        pool = shared.recommend_customers_like_you(als_model, als_item_index, als_item_to_row,
+                                                   saved_set, excluded, k=pool_n, include=include)
+        reasons = shared.explain_cf_for_items([a for a, _ in pool])
+        empty_msg = "Save a few items so collaborative filtering can find shoppers like you."
+    elif algo == "hybrid":
+        pool = shared.recommend_hybrid(profile, tfidf, item_id_to_row, als_model, als_item_index,
+                                       als_item_to_row, candidate_items, saved_set, excluded,
+                                       best_alpha, pool_n, include=include) or []
+        reasons = shared.explain_hybrid_for_items(profile, [a for a, _ in pool], tfidf,
+                                                  item_id_to_row, vectorizer, best_alpha)
+        empty_msg = "Save items or set preferences to get hybrid picks."
+    else:  # neural
+        pool = shared.recommend_ncf(saved_set, excluded, k=pool_n, include=include) or []
+        empty_msg = "Save a few items so the neural model can learn and match your taste."
+
+    if mmr_on and pool:
+        recs = shared.mmr_rerank(pool, tfidf, item_id_to_row, k=ALGO_HOME_SIZE, lambda_param=LAMBDA_MMR)
+    else:
+        recs = list(pool or [])[:ALGO_HOME_SIZE]
+
+    prefetch = []
+    for aid, _ in recs:
+        row = articles[articles["article_id"] == aid]
+        if not row.empty:
+            prefetch.append(row.iloc[0].to_dict())
+    if prefetch:
+        with st.spinner(f"Fetching product images ({len(prefetch)} items)…"):
+            shared.prefetch_images_sync(prefetch, timeout=14.0)
+
+    if not recs:
+        st.info(empty_msg)
+        return
+
+    caption = "Personalised picks, just for you"
+    if st.session_state.get("show_tech_details"):
+        caption += f" · algorithm: {db.ALGORITHM_LABELS.get(algo, algo)}"
+    shared.render_rail(
+        "Picked for you", caption, recs, articles,
+        key_prefix=f"algo_{algo}", user_id=user["id"],
+        saved_set=saved_set, liked_set=liked, disliked_set=disliked, reasons=reasons,
+        cart_set=cart_set,
+    )
+
+
+def _render_cosmetics_home(user):
+    """Cosmetics home: a content-based 'Recommended for you' rail (the trained
+    H&M models don't apply to generated cosmetics, so we use shared.recommend_cosmetics)."""
+    catalogue = shared.load_articles()  # cosmetics df in cosmetics mode
+    state = db.user_state(user["id"])
+    saved, liked, disliked = state["saved"], state["liked"], state["disliked"]
+    saved_set = set(saved)
+    excluded = saved_set | disliked
+    prefs = auth.get_preferences(user["id"])
+    cart_set = {l["article_id"] for l in db.get_cart(user["id"])}
+
+    st.markdown(f'<div class="pill">Welcome back, {user["display_name"]}</div>', unsafe_allow_html=True)
+    st.markdown("<h1>Recommended for you.</h1>", unsafe_allow_html=True)
+    st.markdown('<p class="subtitle">Cosmetics picked for you — skincare, makeup, fragrance and '
+                'hair &amp; body, tuned to your saved items and preferences.</p>', unsafe_allow_html=True)
+
+    recs = shared.recommend_cosmetics(seed_ids=saved, prefs=prefs, k=12, exclude=excluded)
+    caption = ("Based on your saved items." if saved
+               else "Popular picks — save items to personalise this.")
+    shared.render_rail(
+        "Picked for you", caption, recs, catalogue, key_prefix="cos_home",
+        user_id=user["id"], saved_set=saved_set, liked_set=liked, disliked_set=disliked,
+        cart_set=cart_set,
+    )
 
 
 def render_home(user):
     shared.apply_css()
     shared.render_sidebar(user)
+
+    if shared.cosmetics_mode():
+        _render_cosmetics_home(user)
+        return
 
     st.markdown(
         f'<div class="pill">Welcome back, {user["display_name"]}</div>',
@@ -181,6 +276,7 @@ def render_home(user):
     preferences = auth.get_preferences(user["id"])
     saved_set = set(saved)
     excluded = saved_set | disliked  # don't recommend saved-or-disliked
+    cart_set = {l["article_id"] for l in db.get_cart(user["id"])}  # for in-cart ✓ on cards
 
     mmr_on = bool(st.session_state.get("mmr_enabled", True))
     # When MMR is on we ask each recommender for POOL_MULT × RAIL_SIZE
@@ -194,6 +290,19 @@ def render_home(user):
         return shared.mmr_rerank(
             recs, tfidf, item_id_to_row, k=RAIL_SIZE, lambda_param=LAMBDA_MMR,
         )
+
+    # ---------- A/B/n experiment: bucketed customers see ONE algorithm ----------
+    # Each customer is assigned a single algorithm (db.experiment_bucket) so their
+    # engagement is attributable to it. Admins/analysts are unbucketed → merged rails.
+    assigned_algo = db.get_algorithm(user["id"])
+    if assigned_algo:
+        _render_single_algo_home(
+            assigned_algo, user, articles, tfidf, vectorizer,
+            als_model, als_item_index, als_item_to_row, candidate_items,
+            item_id_to_row, saved, saved_set, liked, disliked, preferences,
+            excluded, best_alpha, include, mmr_on, cart_set,
+        )
+        return
 
     # Session-state memoization keyed on (user_id, interactions sig, alpha, mmr_on).
     cache_key = ("home_rails_v3", user["id"], state["signature"], best_alpha, RAIL_SIZE, mmr_on)
@@ -327,7 +436,7 @@ def render_home(user):
         "Picked for you", rail1_caption, picked_recs, articles,
         key_prefix="rail_picked", user_id=user["id"],
         saved_set=saved_set, liked_set=liked, disliked_set=disliked,
-        reasons=rail1_reasons,
+        reasons=rail1_reasons, cart_set=cart_set,
     )
 
     # ---------- Rail 2: Because you saved X (Content-Based) ----------
@@ -346,7 +455,7 @@ def render_home(user):
             key_prefix=f"rail_similar_{latest_aid}",
             user_id=user["id"], saved_set=saved_set,
             liked_set=liked, disliked_set=disliked,
-            reasons=rail2_reasons,
+            reasons=rail2_reasons, cart_set=cart_set,
         )
 
     # ---------- Rail 3: Customers like you also liked (pure ALS / CF) ----------
@@ -359,7 +468,7 @@ def render_home(user):
             key_prefix="rail_customers",
             user_id=user["id"], saved_set=saved_set,
             liked_set=liked, disliked_set=disliked,
-            reasons=customers_reasons,
+            reasons=customers_reasons, cart_set=cart_set,
         )
 
     # ---------- Rail 4: Trending this week (popularity) ----------
@@ -370,7 +479,7 @@ def render_home(user):
         key_prefix="rail_trending",
         user_id=user["id"], saved_set=saved_set,
         liked_set=liked, disliked_set=disliked,
-        reasons=trending_reasons,
+        reasons=trending_reasons, cart_set=cart_set,
     )
 
     # ---------- Rail 5: New arrivals in your style ----------
@@ -386,7 +495,7 @@ def render_home(user):
         key_prefix="rail_new",
         user_id=user["id"], saved_set=saved_set,
         liked_set=liked, disliked_set=disliked,
-        reasons=new_arrivals_reasons,
+        reasons=new_arrivals_reasons, cart_set=cart_set,
     )
 
     # The old "Compare algorithms (research view)" expander has been promoted to
@@ -417,27 +526,45 @@ def main():
     shared.render_brand()  # project logo, top-left above the sidebar nav
 
     role = user.get("role")
-    pages = [
-        st.Page(_home_page, title="Home", icon=":material/home:",
-                url_path="home", default=True),
-        st.Page("pages/1_Catalogue.py", title="Catalogue",
-                icon=":material/storefront:", url_path="catalogue"),
-        st.Page("pages/2_Wishlist.py", title="Wishlist",
-                icon=":material/favorite:", url_path="wishlist"),
-        st.Page("pages/3_Evaluation.py", title="Evaluation",
-                icon=":material/insights:", url_path="evaluation"),
-        st.Page("pages/4_Compare.py", title="Compare",
-                icon=":material/compare_arrows:", url_path="compare"),
-    ]
-    if role in ("admin", "analyst"):
-        pages.append(st.Page("pages/_analytics.py", title="Analytics",
-                             icon=":material/bar_chart:", url_path="analytics"))
     if role == "admin":
-        pages.append(st.Page("pages/_admin.py", title="Admin",
-                             icon=":material/shield_person:", url_path="admin"))
-    # Product detail — reachable via st.switch_page("pages/_product.py") from
-    # cards, but its menu entry is hidden via CSS (a[href$="/product"]).
-    pages.append(st.Page("pages/_product.py", title="Product", url_path="product"))
+        # Admins are a back-office role only — Analytics + Admin, no shopping pages.
+        pages = [
+            st.Page("pages/_analytics.py", title="Analytics",
+                    icon=":material/bar_chart:", url_path="analytics", default=True),
+            st.Page("pages/_admin.py", title="Admin",
+                    icon=":material/shield_person:", url_path="admin"),
+        ]
+    else:
+        n_cart = db.cart_count(user["id"])
+        cart_title = f"Cart ({n_cart})" if n_cart else "Cart"
+        pages = [
+            st.Page(_home_page, title="Home", icon=":material/home:",
+                    url_path="home", default=True),
+            st.Page("pages/1_Catalogue.py", title="Catalogue",
+                    icon=":material/storefront:", url_path="catalogue"),
+            st.Page("pages/2_Wishlist.py", title="Wishlist",
+                    icon=":material/favorite:", url_path="wishlist"),
+            st.Page("pages/_cart.py", title=cart_title,
+                    icon=":material/shopping_bag:", url_path="cart"),
+        ]
+        # Research pages (Evaluation/Compare/Analytics) are for the analyst role,
+        # not the customer-facing shopping experience.
+        if role == "analyst":
+            pages += [
+                st.Page("pages/3_Evaluation.py", title="Evaluation",
+                        icon=":material/insights:", url_path="evaluation"),
+                st.Page("pages/4_Compare.py", title="Compare",
+                        icon=":material/compare_arrows:", url_path="compare"),
+                st.Page("pages/_analytics.py", title="Analytics",
+                        icon=":material/bar_chart:", url_path="analytics"),
+            ]
+        # Hidden pages — reached via buttons / switch_page; nav links hidden in CSS
+        # (a[href$="/product|/checkout|/success"]).
+        pages += [
+            st.Page("pages/_product.py", title="Product", url_path="product"),
+            st.Page("pages/_checkout.py", title="Checkout", url_path="checkout"),
+            st.Page("pages/_success.py", title="Order confirmed", url_path="success"),
+        ]
 
     st.navigation(pages, position="sidebar").run()
 

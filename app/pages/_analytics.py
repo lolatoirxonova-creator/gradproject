@@ -212,6 +212,56 @@ def render_feedback_funnel():
     c2.metric("Like ratio (likes / likes+dislikes)", f"{e['like_ratio']:.1%}")
 
 
+def render_experiment():
+    """A/B/n experiment results: users + engagement per assigned algorithm."""
+    stats = db.algorithm_stats()
+    df = pd.DataFrame(stats)
+    if df.empty or int(df["n_users"].sum()) == 0:
+        st.markdown('<p class="muted">No users assigned to the experiment yet.</p>', unsafe_allow_html=True)
+        return
+
+    df["saves_per_user"] = (df["n_saves"] / df["n_users"].where(df["n_users"] > 0)).fillna(0).round(2)
+    df["likes_per_user"] = (df["n_likes"] / df["n_users"].where(df["n_users"] > 0)).fillna(0).round(2)
+
+    leader = df.sort_values("saves_per_user", ascending=False).iloc[0]
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Users in experiment", f"{int(df['n_users'].sum()):,}")
+    c2.metric("Leading algorithm (saves/user)", leader["label"])
+    c3.metric("Its saves/user", f"{leader['saves_per_user']:.2f}")
+
+    cc1, cc2 = st.columns(2)
+    with cc1:
+        st.markdown('<p class="muted" style="margin-bottom:0;">Users per algorithm</p>', unsafe_allow_html=True)
+        fig = px.bar(
+            df.sort_values("n_users"), x="n_users", y="label", orientation="h",
+            labels={"label": "", "n_users": "Users"},
+            color="label",
+            color_discrete_sequence=["#c19a3e", "#1d1d1f", "#a07e2c", "#8a8178"],
+        )
+        _chart_layout(fig, height=300)
+        fig.update_layout(showlegend=False)  # after _chart_layout (which re-enables it)
+        st.plotly_chart(fig, use_container_width=True)
+    with cc2:
+        st.markdown('<p class="muted" style="margin-bottom:0;">Engagement per user — effectiveness</p>', unsafe_allow_html=True)
+        m = df.melt(id_vars="label", value_vars=["saves_per_user", "likes_per_user"],
+                    var_name="metric", value_name="per_user")
+        m["metric"] = m["metric"].map({"saves_per_user": "Saves/user", "likes_per_user": "Likes/user"})
+        fig = px.bar(
+            m, x="label", y="per_user", color="metric", barmode="group",
+            labels={"label": "", "per_user": "Per user", "metric": ""},
+            color_discrete_sequence=["#c19a3e", "#e2cb8e"],
+        )
+        _chart_layout(fig, height=300)
+        st.plotly_chart(fig, use_container_width=True)
+
+    show = df[["label", "n_users", "n_views", "n_saves", "n_likes", "n_dislikes",
+               "n_purchases", "saves_per_user", "likes_per_user"]].rename(columns={
+        "label": "Algorithm", "n_users": "Users", "n_views": "Views", "n_saves": "Saves",
+        "n_likes": "Likes", "n_dislikes": "Dislikes", "n_purchases": "Purchases",
+        "saves_per_user": "Saves/user", "likes_per_user": "Likes/user"})
+    st.dataframe(show, hide_index=True, use_container_width=True)
+
+
 def main():
     shared.check_session_timeout()
     user = st.session_state.get("user")
@@ -248,6 +298,14 @@ def main():
 
     _section("Platform health")
     render_signups_and_active(days)
+
+    _section(
+        "Algorithm experiment (A/B/n)",
+        "Each customer is round-robin assigned one of the four algorithms and only ever "
+        "sees that one, so engagement is attributable. ‘Saves/user’ is the headline "
+        "effectiveness proxy.",
+    )
+    render_experiment()
 
     _section("Events over time", "Daily interaction volume broken down by event type.")
     render_events_breakdown(days)

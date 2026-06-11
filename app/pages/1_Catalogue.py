@@ -70,6 +70,7 @@ def main():
     saved_set = set(state["saved"])
     liked = state["liked"]
     disliked = state["disliked"]
+    cart_set = {l["article_id"] for l in db.get_cart(user["id"])}
 
     st.markdown('<div class="pill">Catalogue</div>', unsafe_allow_html=True)
     st.markdown("<h1>Browse the catalogue.</h1>", unsafe_allow_html=True)
@@ -210,7 +211,7 @@ def main():
             with col:
                 shared.render_catalogue_card(
                     item, key_prefix=f"cat_p{page}_r{r}_c{ci}",
-                    user_id=user["id"], saved_set=saved_set,
+                    user_id=user["id"], saved_set=saved_set, cart_set=cart_set,
                 )
 
     # ---------- pagination controls ----------

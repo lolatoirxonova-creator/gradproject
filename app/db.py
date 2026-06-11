@@ -74,7 +74,53 @@ CREATE TABLE IF NOT EXISTS sessions (
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+
+-- A/B/n experiment: each customer is round-robin assigned ONE recommendation
+-- algorithm so engagement is attributable. Admins/analysts are not bucketed.
+CREATE TABLE IF NOT EXISTS experiment_bucket (
+    user_id     INTEGER PRIMARY KEY,
+    algorithm   TEXT    NOT NULL,
+    assigned_at TEXT    NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- Shopping cart (one row per user+article; quantity mutable).
+CREATE TABLE IF NOT EXISTS cart (
+    user_id    INTEGER NOT NULL,
+    article_id TEXT    NOT NULL,
+    quantity   INTEGER NOT NULL DEFAULT 1,
+    added_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (user_id, article_id),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- Placed orders (mock checkout) + their line items.
+CREATE TABLE IF NOT EXISTS orders (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL,
+    total      REAL    NOT NULL,
+    n_items    INTEGER NOT NULL,
+    status     TEXT    NOT NULL DEFAULT 'paid',
+    created_at TEXT    NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS order_items (
+    order_id   INTEGER NOT NULL,
+    article_id TEXT    NOT NULL,
+    quantity   INTEGER NOT NULL,
+    unit_price REAL    NOT NULL,
+    FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
+);
 """
+
+# Round-robin order — also the canonical algorithm keys used across the app.
+EXPERIMENT_ALGORITHMS = ("content", "als", "hybrid", "neural")
+ALGORITHM_LABELS = {
+    "content": "Content-Based",
+    "als":     "ALS Collaborative",
+    "hybrid":  "Weighted Hybrid",
+    "neural":  "Neural CF (NeuMF)",
+}
 
 
 def get_conn() -> sqlite3.Connection:
@@ -172,6 +218,7 @@ def init_db() -> None:
                 conn.commit()
 
     purge_expired_sessions()
+    backfill_buckets()
 
 
 def create_session(token: str, user_id: int, ttl_days: int = 30) -> None:
@@ -230,6 +277,166 @@ def purge_expired_sessions() -> None:
     with get_conn() as conn:
         conn.execute("DELETE FROM sessions WHERE datetime('now') > expires_at")
         conn.commit()
+
+
+def get_algorithm(user_id: int) -> str | None:
+    """The recommendation algorithm this user is bucketed into, or None."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT algorithm FROM experiment_bucket WHERE user_id = ?", (user_id,)
+        ).fetchone()
+    return row["algorithm"] if row else None
+
+
+def backfill_buckets() -> None:
+    """Round-robin assign any unbucketed *customers* (by signup order) to one of
+    EXPERIMENT_ALGORITHMS, continuing the existing rotation. Idempotent — runs in
+    init_db(), so new signups receive the next algorithm on their first load."""
+    with get_conn() as conn:
+        n = conn.execute("SELECT COUNT(*) AS c FROM experiment_bucket").fetchone()["c"]
+        rows = conn.execute(
+            "SELECT u.id FROM users u "
+            "LEFT JOIN experiment_bucket b ON b.user_id = u.id "
+            "WHERE b.user_id IS NULL AND u.role = 'customer' "
+            "ORDER BY u.created_at, u.id"
+        ).fetchall()
+        for i, r in enumerate(rows):
+            algo = EXPERIMENT_ALGORITHMS[(n + i) % len(EXPERIMENT_ALGORITHMS)]
+            conn.execute(
+                "INSERT OR IGNORE INTO experiment_bucket(user_id, algorithm) VALUES (?, ?)",
+                (r["id"], algo),
+            )
+        if rows:
+            conn.commit()
+
+
+def algorithm_stats() -> list[dict]:
+    """Per-algorithm experiment results: assigned users + engagement event counts.
+
+    Engagement is attributed by the user's bucket (each bucketed customer only
+    ever sees their one algorithm). Counts are raw events from the interactions
+    log. Always returns a row for every algorithm (zero-filled)."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT b.algorithm,
+                   COUNT(DISTINCT b.user_id) AS n_users,
+                   COALESCE(SUM(i.event_type = 'view'),     0) AS n_views,
+                   COALESCE(SUM(i.event_type = 'save'),     0) AS n_saves,
+                   COALESCE(SUM(i.event_type = 'like'),     0) AS n_likes,
+                   COALESCE(SUM(i.event_type = 'dislike'),  0) AS n_dislikes,
+                   COALESCE(SUM(i.event_type = 'purchase'), 0) AS n_purchases
+            FROM experiment_bucket b
+            LEFT JOIN interactions i ON i.user_id = b.user_id
+            GROUP BY b.algorithm
+            """
+        ).fetchall()
+    by_algo = {r["algorithm"]: dict(r) for r in rows}
+    out = []
+    for algo in EXPERIMENT_ALGORITHMS:
+        d = by_algo.get(algo, {"algorithm": algo, "n_users": 0, "n_views": 0,
+                               "n_saves": 0, "n_likes": 0, "n_dislikes": 0, "n_purchases": 0})
+        d["label"] = ALGORITHM_LABELS.get(algo, algo)
+        out.append(d)
+    return out
+
+
+# ---------- shopping cart ----------
+
+def add_to_cart(user_id: int, article_id: str, qty: int = 1) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO cart(user_id, article_id, quantity) VALUES (?, ?, ?) "
+            "ON CONFLICT(user_id, article_id) DO UPDATE SET quantity = quantity + excluded.quantity",
+            (user_id, str(article_id), max(1, int(qty))),
+        )
+        conn.commit()
+
+
+def get_cart(user_id: int) -> list[dict]:
+    """Cart lines [{article_id, quantity}] in add order."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT article_id, quantity FROM cart WHERE user_id = ? ORDER BY added_at, article_id",
+            (user_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def set_cart_qty(user_id: int, article_id: str, qty: int) -> None:
+    """Set a line's quantity; qty <= 0 removes the line."""
+    if int(qty) <= 0:
+        remove_from_cart(user_id, article_id)
+        return
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE cart SET quantity = ? WHERE user_id = ? AND article_id = ?",
+            (int(qty), user_id, str(article_id)),
+        )
+        conn.commit()
+
+
+def remove_from_cart(user_id: int, article_id: str) -> None:
+    with get_conn() as conn:
+        conn.execute("DELETE FROM cart WHERE user_id = ? AND article_id = ?",
+                     (user_id, str(article_id)))
+        conn.commit()
+
+
+def clear_cart(user_id: int) -> None:
+    with get_conn() as conn:
+        conn.execute("DELETE FROM cart WHERE user_id = ?", (user_id,))
+        conn.commit()
+
+
+def cart_count(user_id: int) -> int:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT COALESCE(SUM(quantity), 0) AS n FROM cart WHERE user_id = ?", (user_id,)
+        ).fetchone()
+    return int(row["n"])
+
+
+def create_order(user_id: int, items: list[tuple]) -> int:
+    """Create a paid order from `items` = [(article_id, quantity, unit_price), ...].
+
+    Records order + line items, logs a `purchase` interaction per article (feeds
+    analytics + recommenders), clears the cart, and returns the new order id.
+    """
+    total = sum(q * p for _, q, p in items)
+    n_items = sum(q for _, q, _ in items)
+    with get_conn() as conn:
+        cur = conn.execute(
+            "INSERT INTO orders(user_id, total, n_items) VALUES (?, ?, ?)",
+            (user_id, float(total), int(n_items)),
+        )
+        order_id = cur.lastrowid
+        conn.executemany(
+            "INSERT INTO order_items(order_id, article_id, quantity, unit_price) VALUES (?, ?, ?, ?)",
+            [(order_id, str(a), int(q), float(p)) for a, q, p in items],
+        )
+        for a, _, _ in items:
+            conn.execute(
+                "INSERT INTO interactions(user_id, article_id, event_type) VALUES (?, ?, 'purchase')",
+                (user_id, str(a)),
+            )
+        conn.execute("DELETE FROM cart WHERE user_id = ?", (user_id,))
+        conn.commit()
+    return int(order_id)
+
+
+def get_order(order_id: int) -> dict | None:
+    with get_conn() as conn:
+        o = conn.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
+        if o is None:
+            return None
+        items = conn.execute(
+            "SELECT article_id, quantity, unit_price FROM order_items WHERE order_id = ?",
+            (order_id,),
+        ).fetchall()
+    d = dict(o)
+    d["items"] = [dict(r) for r in items]
+    return d
 
 
 def record_login_attempt(email: str, success: bool,
