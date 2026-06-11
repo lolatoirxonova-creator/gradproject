@@ -428,17 +428,17 @@ def _resolve_image_src(article_id: str, item: dict | None,
     return _picsum_fallback_url(aid, width, height)
 
 
-def cosmetics_gallery(article_id: str, item: dict | None = None) -> list[str]:
-    """Image sources for a product's gallery (#8): the primary photo plus any
-    committed extras at app/assets/cosmetics/{aid}_2.jpg, _3.jpg, _4.jpg."""
-    import base64
-    aid = str(article_id)
-    srcs = [_resolve_image_src(aid, item, width=640, height=640)]
-    for n in (2, 3, 4):
-        p = ASSETS_DIR / "cosmetics" / f"{aid}_{n}.jpg"
-        if p.exists() and p.stat().st_size > 1024:
-            srcs.append("data:image/jpeg;base64," + base64.b64encode(p.read_bytes()).decode())
-    return srcs
+def cosmetics_gallery(article_id: str, item: dict | None = None) -> list[dict]:
+    """Gallery framings of the SAME product photo (#4): a full view plus two
+    close-ups. Every gallery image is therefore the same product — we only have
+    one verified photo per product, so we reframe it rather than show unrelated
+    stock photos. Returns [{src, style}] applied to the (overflow-hidden) image."""
+    src = _resolve_image_src(str(article_id), item, width=640, height=640)
+    return [
+        {"src": src, "style": "object-position:center;"},
+        {"src": src, "style": "transform:scale(1.6);transform-origin:center;"},
+        {"src": src, "style": "transform:scale(1.4);transform-origin:top center;"},
+    ]
 
 
 # Product-type → Loremflickr keyword. H&M product_type_name values are
@@ -782,7 +782,8 @@ CUSTOM_CSS = """
     margin: 4px 0 28px; box-shadow: var(--shadow-2);
   }
   .carousel .slide {
-    position: absolute; inset: 0; opacity: 0; animation: carofade 18s infinite;
+    position: absolute; inset: 0; opacity: 0; pointer-events: none;
+    animation: carofade 18s infinite;
     display: flex; flex-direction: column; justify-content: center;
     padding: 0 56px; color: #fff;
   }
@@ -797,7 +798,11 @@ CUSTOM_CSS = """
     background: rgba(255,255,255,0.22); padding: 4px 12px; border-radius: 100px;
   }
   @keyframes carofade {
-    0% { opacity: 0; } 4% { opacity: 1; } 30% { opacity: 1; } 36% { opacity: 0; } 100% { opacity: 0; }
+    0%   { opacity: 0; pointer-events: none; }
+    4%   { opacity: 1; pointer-events: auto; }
+    30%  { opacity: 1; pointer-events: auto; }
+    36%  { opacity: 0; pointer-events: none; }
+    100% { opacity: 0; pointer-events: none; }
   }
   .carousel .dots { position: absolute; bottom: 14px; right: 22px; display: flex; gap: 7px; }
   .carousel .dots i { width: 7px; height: 7px; border-radius: 50%; background: rgba(255,255,255,0.55); display: block; }
@@ -979,25 +984,40 @@ CUSTOM_CSS = """
   .st-key-guest_signin { position: fixed; top: 14px; right: 22px; z-index: 1000; width: auto !important; }
   .st-key-guest_signin button { box-shadow: var(--shadow-2) !important; }
 
-  /* ===== Whole-card click — a transparent button overlays the card (#3) ===== */
-  div[class*="st-key-cw_"] { position: relative !important; }
+  /* ===== Product card = ONE container: image/body + actions (#2) =====
+     The container is the bordered card box; the inner .card markdown drops its
+     own border. A transparent button overlays the whole box to open the product
+     (#3); the action row sits above it via z-index so its buttons stay clickable. */
+  div[class*="st-key-cw_"] {
+    position: relative !important;
+    border: 1px solid var(--border); border-radius: 18px; overflow: hidden;
+    background: var(--bg); box-shadow: var(--shadow-1); margin: 6px 0;
+    transition: transform .22s cubic-bezier(.2,.7,.2,1), box-shadow .22s ease, border-color .22s ease;
+  }
+  div[class*="st-key-cw_"]:hover {
+    transform: translateY(-6px); box-shadow: var(--shadow-2); border-color: var(--border-2);
+  }
   div[class*="st-key-cw_"] > div[data-testid="stVerticalBlock"] { gap: 0 !important; }
+  div[class*="st-key-cw_"] .card {
+    border: none !important; box-shadow: none !important; margin: 0 !important;
+    border-radius: 0 !important;
+  }
+  /* transparent full-card overlay link (behind the action row) */
   div[class*="st-key-cl_"] {
-    position: absolute !important; inset: 0 !important; z-index: 4 !important;
+    position: absolute !important; inset: 0 !important; z-index: 1 !important;
     margin: 0 !important; padding: 0 !important; height: 100% !important;
   }
   div[class*="st-key-cl_"] .stButton,
-  div[class*="st-key-cl_"] .stButton > button {
-    height: 100% !important; width: 100% !important;
-  }
+  div[class*="st-key-cl_"] .stButton > button { height: 100% !important; width: 100% !important; }
   div[class*="st-key-cl_"] button {
     opacity: 0 !important; min-height: 100% !important; border: none !important;
     background: transparent !important; cursor: pointer !important; box-shadow: none !important;
   }
-  /* hover-lift driven by the wrapper so it still works under the overlay */
-  div[class*="st-key-cw_"]:hover .card {
-    transform: translateY(-6px); box-shadow: var(--shadow-2); border-color: var(--border-2);
+  /* action row(s) inside the card — padded + above the overlay so they're clickable */
+  div[class*="st-key-cw_"] [data-testid="stHorizontalBlock"] {
+    position: relative; z-index: 3; padding: 0 12px 10px;
   }
+  div[class*="st-key-cw_"] [data-testid="stHorizontalBlock"]:first-of-type { padding-top: 10px; }
 
   /* ===== Product gallery thumbnails (#8) ===== */
   .pthumbs { display: flex; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
@@ -2417,12 +2437,12 @@ def render_rec_cards(rec_ids, articles: pd.DataFrame, key_prefix: str = "rec",
                     if st.button("View product", key=f"cl_{key_prefix}_{aid}"):  # transparent overlay (#3)
                         st.session_state["viewing_article_id"] = aid
                         st.switch_page("pages/_product.py")
-                _render_actions(
-                    d["article_id"], key_prefix,
-                    user_id=user_id, saved_set=saved_set,
-                    liked_set=liked_set, disliked_set=disliked_set,
-                    cart_set=cart_set,
-                )
+                    _render_actions(
+                        d["article_id"], key_prefix,
+                        user_id=user_id, saved_set=saved_set,
+                        liked_set=liked_set, disliked_set=disliked_set,
+                        cart_set=cart_set,
+                    )
 
 
 def render_catalogue_card(item: dict, key_prefix: str,
@@ -2430,19 +2450,21 @@ def render_catalogue_card(item: dict, key_prefix: str,
                           liked_set: set | None = None, disliked_set: set | None = None,
                           reason: str | None = None, score: float | None = None,
                           cart_set: set | None = None) -> None:
-    """Unranked card (used in browse/wishlist grids and rails)."""
+    """Unranked card (used in browse/wishlist grids and rails). Image+body and the
+    action row live in ONE container styled as the card (#2); the transparent
+    overlay button opens the product, the actions sit above it (z-index)."""
     aid = str(item["article_id"])
     with st.container(key=f"cw_{key_prefix}_{aid}"):
         st.markdown(_card_html(item, rank=None, score=score, reason=reason), unsafe_allow_html=True)
         if st.button("View product", key=f"cl_{key_prefix}_{aid}"):  # transparent overlay (#3)
             st.session_state["viewing_article_id"] = aid
             st.switch_page("pages/_product.py")
-    _render_actions(
-        aid, key_prefix,
-        user_id=user_id, saved_set=saved_set,
-        liked_set=liked_set, disliked_set=disliked_set,
-        cart_set=cart_set,
-    )
+        _render_actions(
+            aid, key_prefix,
+            user_id=user_id, saved_set=saved_set,
+            liked_set=liked_set, disliked_set=disliked_set,
+            cart_set=cart_set,
+        )
 
 
 def render_rail(title: str, caption: str, recs, articles: pd.DataFrame,

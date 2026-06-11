@@ -100,11 +100,12 @@ def _cosmetics_filter_dialog(articles, lo, hi):
     """All facet filters in one modal (#10). Widgets use w_* keys seeded from the
     persistent f_* state; Apply commits w_* → f_*."""
     # seed widget state from the committed filters (only when absent)
+    _price = _fget("f_price") or (lo, hi)
     seeds = {"w_tag": _fget("f_tag"), "w_category": _fget("f_category"),
              "w_brand": _fget("f_brand"), "w_type": _fget("f_type"),
              "w_quality": _fget("f_quality"), "w_size": _fget("f_size"),
              "w_made": _fget("f_made"), "w_shade": _fget("f_shade"),
-             "w_price": _fget("f_price") or (lo, hi)}
+             "w_price_min": float(_price[0]), "w_price_max": float(_price[1])}
     for k, v in seeds.items():
         st.session_state.setdefault(k, v)
 
@@ -134,9 +135,16 @@ def _cosmetics_filter_dialog(articles, lo, hi):
     with g2:
         _multiselect("Shade", articles["colour_group_name"], "w_shade")
 
-    st.markdown('<div class="field-label">Price ($)</div>', unsafe_allow_html=True)
-    st.slider("Price", min_value=lo, max_value=hi, step=1.0,
-              label_visibility="collapsed", key="w_price")
+    st.markdown('<div class="field-label">Price ($) — enter a range</div>', unsafe_allow_html=True)
+    p1, p2 = st.columns(2)
+    with p1:
+        st.number_input("Min price", min_value=0.0, step=1.0, format="%.0f",
+                        label_visibility="collapsed", key="w_price_min",
+                        placeholder=f"Min ({lo:.0f})")
+    with p2:
+        st.number_input("Max price", min_value=0.0, step=1.0, format="%.0f",
+                        label_visibility="collapsed", key="w_price_max",
+                        placeholder=f"Max ({hi:.0f})")
 
     st.markdown('<div class="divider" style="margin:1rem 0 !important;"></div>', unsafe_allow_html=True)
     b1, b2, b3 = st.columns(3)
@@ -160,8 +168,11 @@ def _cosmetics_filter_dialog(articles, lo, hi):
         st.session_state["f_size"] = st.session_state["w_size"]
         st.session_state["f_made"] = st.session_state["w_made"]
         st.session_state["f_shade"] = st.session_state["w_shade"]
-        price = st.session_state["w_price"]
-        st.session_state["f_price"] = None if tuple(price) == (lo, hi) else tuple(price)
+        pmin = float(st.session_state["w_price_min"] or 0)
+        pmax = float(st.session_state["w_price_max"] or hi)
+        if pmin > pmax:
+            pmin, pmax = pmax, pmin
+        st.session_state["f_price"] = None if (pmin <= lo and pmax >= hi) else (pmin, pmax)
         st.session_state["cat_page"] = 1
         st.rerun()
 
@@ -300,15 +311,47 @@ def main():
 
     if total_pages > 1:
         st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-        p1, _, p2 = st.columns([1, 2, 1])
-        with p1:
-            if st.button("← Previous", disabled=(page == 1), use_container_width=True, key="cat_prev"):
-                st.session_state["cat_page"] = max(1, page - 1)
+        _render_pagination(page, total_pages)
+
+
+def _page_window(page: int, total: int, span: int = 2) -> list:
+    """Pages to show: first, last, and a window around the current page, with
+    None markers for gaps (rendered as an ellipsis)."""
+    keep = {1, total, *range(page - span, page + span + 1)}
+    keep = sorted(p for p in keep if 1 <= p <= total)
+    out, prev = [], 0
+    for p in keep:
+        if prev and p - prev > 1:
+            out.append(None)
+        out.append(p)
+        prev = p
+    return out
+
+
+def _render_pagination(page: int, total_pages: int) -> None:
+    """Centered Prev · numbered pages · Next (#8)."""
+    win = _page_window(page, total_pages)
+    widths = [1.0] + [0.5] * len(win) + [1.0]
+    bar = st.columns(widths, gap="small")
+    with bar[0]:
+        if st.button("Prev", icon=":material/chevron_left:", disabled=(page == 1),
+                     use_container_width=True, key="cat_prev"):
+            st.session_state["cat_page"] = max(1, page - 1)
+            st.rerun()
+    for i, p in enumerate(win, start=1):
+        with bar[i]:
+            if p is None:
+                st.markdown('<p style="text-align:center;color:var(--muted);margin:8px 0;">…</p>',
+                            unsafe_allow_html=True)
+            elif st.button(str(p), key=f"cat_pg_{p}", use_container_width=True,
+                           type=("primary" if p == page else "secondary")):
+                st.session_state["cat_page"] = p
                 st.rerun()
-        with p2:
-            if st.button("Next →", disabled=(page == total_pages), use_container_width=True, key="cat_next"):
-                st.session_state["cat_page"] = min(total_pages, page + 1)
-                st.rerun()
+    with bar[-1]:
+        if st.button("Next", icon=":material/chevron_right:", disabled=(page == total_pages),
+                     use_container_width=True, key="cat_next"):
+            st.session_state["cat_page"] = min(total_pages, page + 1)
+            st.rerun()
 
 
 main()

@@ -1,43 +1,42 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="900" height="1240" viewBox="0 0 900 1240" fill="none">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="0.2" y2="1">
-      <stop offset="0" stop-color="#FBF3DE"/>
-      <stop offset="1" stop-color="#EAD5A0"/>
+      <stop offset="0" stop-color="#FBF3DE"/><stop offset="1" stop-color="#EAD5A0"/>
     </linearGradient>
-    <linearGradient id="sun" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#EBCF86"/>
-      <stop offset="0.5" stop-color="#C19A3E"/>
-      <stop offset="1" stop-color="#8A6D22"/>
+    <linearGradient id="pg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#EBCF86"/><stop offset="0.55" stop-color="#C19A3E"/><stop offset="1" stop-color="#8A6D22"/>
     </linearGradient>
-    <clipPath id="discClip"><circle cx="20" cy="20" r="18"/></clipPath>
+    <linearGradient id="pg2" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#D9B85A"/><stop offset="1" stop-color="#9C7C2C"/>
+    </linearGradient>
   </defs>
 
   <rect width="900" height="1240" fill="url(#bg)"/>
-
-  <!-- thin outer ring -->
   <circle cx="470" cy="520" r="350" fill="none" stroke="#C19A3E" stroke-opacity="0.20" stroke-width="2"/>
 
-  <!-- Barakaly emblem (project logo): gold disc + woman profile + flowing hair -->
-  <g transform="translate(150,200) scale(16)">
-    <circle cx="20" cy="20" r="18" fill="url(#sun)"/>
-    <g clip-path="url(#discClip)">
-      <path fill="#FBF7EE" d="M2 2 H22
-        C 19.4 5.6, 17.6 8.4, 17.4 11.4
-        C 17.3 13.2, 15.1 13.9, 15.4 15.4
-        C 15.6 16.5, 17.0 16.6, 16.7 17.6
-        C 16.4 18.7, 17.3 19.0, 17.0 20.1
-        C 16.7 21.4, 18.2 22.6, 19.4 23.3
-        C 21.2 24.4, 21.8 26.2, 21.8 28.6
-        L 21.8 42 H2 Z"/>
-      <path fill="none" stroke="#8A6D22" stroke-width="1.4" stroke-linecap="round"
-        d="M24 5 C 31 12, 31 24, 25.5 33"/>
-      <path fill="none" stroke="#A07E2C" stroke-width="1.2" stroke-linecap="round"
-        d="M22 7 C 27.5 13, 27.5 23, 23.5 31"/>
+  <!-- Barakaly bloom mark -->
+  <g transform="translate(470,520) scale(12)">
+    <g fill="url(#pg)">
+      <path d="M0 -3 C -7 -11 -7 -20 0 -23 C 7 -20 7 -11 0 -3 Z"/>
+      <g transform="rotate(45)"><path d="M0 -3 C -7 -11 -7 -20 0 -23 C 7 -20 7 -11 0 -3 Z"/></g>
+      <g transform="rotate(90)"><path d="M0 -3 C -7 -11 -7 -20 0 -23 C 7 -20 7 -11 0 -3 Z"/></g>
+      <g transform="rotate(135)"><path d="M0 -3 C -7 -11 -7 -20 0 -23 C 7 -20 7 -11 0 -3 Z"/></g>
+      <g transform="rotate(180)"><path d="M0 -3 C -7 -11 -7 -20 0 -23 C 7 -20 7 -11 0 -3 Z"/></g>
+      <g transform="rotate(225)"><path d="M0 -3 C -7 -11 -7 -20 0 -23 C 7 -20 7 -11 0 -3 Z"/></g>
+      <g transform="rotate(270)"><path d="M0 -3 C -7 -11 -7 -20 0 -23 C 7 -20 7 -11 0 -3 Z"/></g>
+      <g transform="rotate(315)"><path d="M0 -3 C -7 -11 -7 -20 0 -23 C 7 -20 7 -11 0 -3 Z"/></g>
     </g>
-    <circle cx="20" cy="20" r="18" fill="none" stroke="#8A6D22" stroke-width="0.7" opacity="0.45"/>
+    <g fill="url(#pg2)">
+      <g transform="rotate(22)"><path d="M0 -2 C -4.5 -7 -4.5 -13 0 -15 C 4.5 -13 4.5 -7 0 -2 Z"/></g>
+      <g transform="rotate(82)"><path d="M0 -2 C -4.5 -7 -4.5 -13 0 -15 C 4.5 -13 4.5 -7 0 -2 Z"/></g>
+      <g transform="rotate(142)"><path d="M0 -2 C -4.5 -7 -4.5 -13 0 -15 C 4.5 -13 4.5 -7 0 -2 Z"/></g>
+      <g transform="rotate(202)"><path d="M0 -2 C -4.5 -7 -4.5 -13 0 -15 C 4.5 -13 4.5 -7 0 -2 Z"/></g>
+      <g transform="rotate(262)"><path d="M0 -2 C -4.5 -7 -4.5 -13 0 -15 C 4.5 -13 4.5 -7 0 -2 Z"/></g>
+      <g transform="rotate(322)"><path d="M0 -2 C -4.5 -7 -4.5 -13 0 -15 C 4.5 -13 4.5 -7 0 -2 Z"/></g>
+    </g>
+    <circle r="5" fill="#FBF3DE"/><circle r="5" fill="none" stroke="#9C7C2C" stroke-width="0.7"/>
   </g>
 
-  <!-- faint sparkle motif -->
   <g fill="#C19A3E" fill-opacity="0.18">
     <path d="M180 240 c12 28, 24 40, 52 52 c-28 12, -40 24, -52 52 c-12 -28, -24 -40, -52 -52 c28 -12, 40 -24, 52 -52 Z"/>
     <path d="M760 880 c9 21, 18 30, 39 39 c-21 9, -30 18, -39 39 c-9 -21, -18 -30, -39 -39 c21 -9, 30 -18, 39 -39 Z"/>

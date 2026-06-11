@@ -94,8 +94,11 @@ def main():
     # Prefetch the hero image and similar-items images server-side. Similar
     # items are computed below but we can warm the cache while the user reads.
     shared.prefetch_images_sync([item_dict])
-    gallery = shared.cosmetics_gallery(article_id, item_dict) if cosmetics \
-        else [shared._resolve_image_src(article_id, item_dict, width=600, height=750)]
+    if cosmetics:
+        gallery = shared.cosmetics_gallery(article_id, item_dict)
+    else:
+        gallery = [{"src": shared._resolve_image_src(article_id, item_dict, width=600, height=750),
+                    "style": "object-position:center;"}]
     try:
         sel = int(st.query_params.get("gimg", 0))
     except (TypeError, ValueError):
@@ -107,18 +110,19 @@ def main():
         st.markdown(
             f'<div class="card" style="padding:0;">'
             f'  <div class="card-image-wrapper" style="aspect-ratio: 1/1;">'
-            f'    <img class="card-image" src="{gallery[sel]}" alt="product image" />'
+            f'    <img class="card-image" src="{gallery[sel]["src"]}" '
+            f'style="{gallery[sel]["style"]}" alt="product image" />'
             f'  </div>'
             f'</div>',
             unsafe_allow_html=True,
         )
-        # thumbnail strip (#8) — each links back to this page with ?gimg=N
+        # thumbnail strip (#4/#8) — framings of the same product; link via ?gimg=N
         if len(gallery) > 1:
             thumbs = "".join(
                 f'<a class="pthumb{" active" if i == sel else ""}" '
                 f'href="product?aid={article_id}&gimg={i}" target="_self">'
-                f'<img src="{src}" alt="view {i + 1}" /></a>'
-                for i, src in enumerate(gallery)
+                f'<img src="{g["src"]}" style="{g["style"]}" alt="view {i + 1}" /></a>'
+                for i, g in enumerate(gallery)
             )
             st.markdown(f'<div class="pthumbs">{thumbs}</div>', unsafe_allow_html=True)
 
@@ -158,6 +162,33 @@ def main():
         if _short or _rating0:
             sep = ' &nbsp;<span style="color:var(--border-2);">·</span>&nbsp; ' if (_short and _rating0) else ""
             st.markdown(f'<p class="desc-rating">{_short}{sep}{_rating0}</p>', unsafe_allow_html=True)
+
+        # ---------- Details spec table — beside the image (#5) ----------
+        if cosmetics:
+            spec_rows = [
+                ("Brand", "brand"), ("Category", "category"), ("Type", "product_type_name"),
+                ("For", "index_group_name"), ("Shade", "colour_group_name"),
+                ("Size", "size"), ("Quality", "quality"), ("Made in", "made_in"),
+            ]
+        else:
+            spec_rows = [
+                ("Department", "department_name"), ("Section", "section_name"),
+                ("Group", "product_group_name"), ("Type", "product_type_name"),
+                ("Colour", "colour_group_name"),
+                ("Perceived colour", "perceived_colour_master_name"),
+                ("Garment group", "garment_group_name"),
+            ]
+        spec_html = "".join(
+            f'<div style="display:flex; justify-content:space-between; padding: 8px 0; '
+            f'border-bottom: 1px solid var(--border); font-size: 13px;">'
+            f'<span style="color:var(--muted);">{label}</span>'
+            f'<span style="color:var(--ink); font-weight: 500;">{_format_value(item.get(col))}</span></div>'
+            for label, col in spec_rows if col in item.index
+        )
+        st.markdown('<h2 style="font-size:18px;margin-top:1rem !important;">Details</h2>',
+                    unsafe_allow_html=True)
+        st.markdown(spec_html, unsafe_allow_html=True)
+        st.markdown('<div style="height:14px;"></div>', unsafe_allow_html=True)
 
         # compare toggle (public — guests can compare too)
         _in_cmp = shared.in_compare(article_id)
@@ -203,34 +234,6 @@ def main():
                     db.log_interaction(user["id"], article_id, "save")
                     st.rerun()
             st.caption(f"{len(saved)} item{'s' if len(saved) != 1 else ''} in your wishlist")
-
-        # Spec table
-        st.markdown("<h2 style='font-size: 18px;'>Details</h2>", unsafe_allow_html=True)
-        if cosmetics:
-            spec_rows = [
-                ("Brand", "brand"), ("Category", "category"), ("Type", "product_type_name"),
-                ("For", "index_group_name"), ("Shade", "colour_group_name"),
-                ("Size", "size"), ("Quality", "quality"), ("Made in", "made_in"),
-            ]
-        else:
-            spec_rows = [
-                ("Department", "department_name"),
-                ("Section", "section_name"),
-                ("Group", "product_group_name"),
-                ("Type", "product_type_name"),
-                ("Colour", "colour_group_name"),
-                ("Perceived colour", "perceived_colour_master_name"),
-                ("Garment group", "garment_group_name"),
-            ]
-        spec_html = "".join(
-            f'<div style="display:flex; justify-content:space-between; padding: 8px 0; '
-            f'border-bottom: 1px solid #f0f0f2; font-size: 13px;">'
-            f'<span style="color:#86868b;">{label}</span>'
-            f'<span style="color:#1d1d1f; font-weight: 500;">{_format_value(item.get(col))}</span></div>'
-            for label, col in spec_rows
-            if col in item.index
-        )
-        st.markdown(spec_html, unsafe_allow_html=True)
 
     # ---------- full description ----------
     detail = _format_value(item.get("detail_desc"))

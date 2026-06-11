@@ -591,14 +591,13 @@ def main():
                 position="hidden",
             ).run()
             return
-        # Public browsing (#2): guests can view Home + Catalogue + product detail;
+        # Public browsing (#2): guests browse the Catalogue (their landing page —
+        # no Home section until they sign in, #1) + Compare + product detail;
         # ordering / saving requires sign-in.
         cmp_n = len(shared.compare_ids())
         st.navigation([
-            st.Page(_home_page, title="Home", icon=":material/home:",
-                    url_path="home", default=True),
             st.Page("pages/1_Catalogue.py", title="Catalogue",
-                    icon=":material/storefront:", url_path="catalogue"),
+                    icon=":material/storefront:", url_path="catalogue", default=True),
             st.Page("pages/_compare.py", title=f"Compare ({cmp_n})" if cmp_n else "Compare",
                     icon=":material/balance:", url_path="compare"),
             st.Page("pages/_product.py", title="Product", url_path="product"),
