@@ -7,6 +7,8 @@ date: "May 2026"
 
 \newpage
 
+> **⚠️ Superseded for the platform layer (updated 2026-06).** This plain-English guide describes the project's *pre-platform* state: the public Streamlit demo where a visitor picked an existing H&M customer to see recommendations. The project has since shipped a real product — **"Chiroyli", a gold-themed cosmetics marketplace** (auth, public browse, cart + offline order, reviews, comparison, a rule-based assistant, and a seller panel). For the current platform, **read `docs/final_report.md` Chapter 5b**, which supersedes Sections 9–11 below. The four algorithms and their evaluation (Sections 1–8) remain accurate — they are trained on H&M data and still back the analyst-only research pages — but note the live cosmetics storefront uses a *separate content-based recommender*, because the H&M-trained models cannot score the cosmetics catalogue (final_report §5b.14). The rendered `project_explained.pdf` predates this note and is likewise stale for the platform layer.
+
 # Foreword
 
 This document explains, in plain English, every moving part of the **Hybrid Product Recommendation System** project. It is written for a reader who has *used* the demo but has not yet been told what is happening underneath.

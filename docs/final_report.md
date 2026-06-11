@@ -37,7 +37,7 @@ Unit 2 — Unit Code: 70726U — Credit Value: 30
 
 > **Write last.** 200–300 words on one page. Structure: (1) context & problem, (2) aim, (3) methodology, (4) key findings, (5) conclusion. No citations or abbreviations in the abstract.
 
-[Open with one sentence on global e-commerce + personalisation. State the problem: under what conditions does a hybrid recommender beat single-algorithm baselines on a real fashion dataset? State the aim. Summarise the methodology in two sentences (H&M dataset, four algorithms, 5-fold CV, statistical tests). Quote the headline finding with one number. Close with the contribution.]
+[Open with one sentence on global e-commerce + personalisation. State the problem: under what conditions does a hybrid recommender beat single-algorithm baselines on a real fashion dataset? State the aim. Summarise the methodology in two sentences (H&M dataset, four algorithms, 5-fold CV, statistical tests). Quote the headline finding with one number. Note that the models were deployed as a real auth-gated product — the "Chiroyli" cosmetics marketplace — and that pivoting to a domain without transaction history surfaced an end-to-end cold-start finding. Close with the contribution.]
 
 **Keywords:** recommendation systems; collaborative filtering; content-based filtering; hybrid models; neural collaborative filtering; e-commerce personalisation
 
@@ -127,11 +127,11 @@ To design, build and critically evaluate a hybrid product recommendation system 
 
 ## 1.6 Significance of the Project
 
-[2–3 paragraphs. Academic, industry, personal significance. Reference Uzbek e-commerce growth (Uzum, Olcha).]
+[2–3 paragraphs. Academic, industry, personal significance. Reference Uzbek e-commerce growth (Uzum, Asaxiy, Olcha) and frame the deployed artefact — the "Chiroyli" cosmetics marketplace (Chapter 5b) — as a concrete instance of personalisation for a local marketplace, including the day-one cold-start reality a new vendor faces.]
 
 ## 1.7 Scope and Limitations
 
-[1 paragraph each. Scope: four algorithms, single dataset, offline evaluation, optional small-N user feedback. Limitations: dataset bias (H&M-specific), offline metrics only, compute constraint on NCF.]
+[1 paragraph each. Scope: four algorithms, single dataset (H&M), offline evaluation, optional small-N user feedback, plus the deployed "Chiroyli" cosmetics marketplace as the graded "real product" layer (Chapter 5b). Limitations: dataset bias (H&M-specific), offline metrics only, compute constraint on NCF, and — critically — the marketplace pivot to a domain with no transaction history, which limits the live storefront to a content-based recommender (see §5b.14).]
 
 ## 1.8 Structure of the Report
 
@@ -235,35 +235,38 @@ To design, build and critically evaluate a hybrid product recommendation system 
 
 ---
 
-# Chapter 5b — Platform Implementation: Auth-Gated Product
+# Chapter 5b — Platform Implementation: the "Chiroyli" Marketplace
 
-> **Criteria:** P4, M5, D3 (added at supervisor request — the academic notebooks alone do not satisfy the "real product" scoping of this submission)  ·  **Target:** 800–1,200 words
+> **Criteria:** P4, M5, D3 (added at supervisor request — the academic notebooks alone do not satisfy the "real product" scoping of this submission)  ·  **Target:** 1,200–1,600 words
 
-This chapter documents the deployed multi-user platform built on top of the four notebook-trained models. The decision to deliver an auth-gated product (rather than the original public Streamlit demo) was taken late in the project at the supervisor's direction; this chapter therefore both describes the artefact and reflects critically on the late-stage scope expansion (D2 evidence).
+This chapter documents the deployed multi-user platform built on top of the four notebook-trained models. The product passed through two deliberate, late-stage scope changes: first from a public Streamlit demo to an **auth-gated product**, then a pivot to **"Chiroyli" — a gold-themed cosmetics marketplace** modelled on local Uzbek e-commerce (Uzum, Asaxiy, Olcha). This chapter describes the current artefact and reflects critically on managing that moving scope (D2 evidence).
 
-## 5b.1 Scope Decision and Cut List
+One design constraint governs everything below. **The four models are trained on H&M fashion `article_id`s and cannot score the cosmetics catalogue** — there is no cosmetics transaction history to fit a collaborative model on. Rather than fabricate one, the marketplace serves its recommendations from a **separate content-based recommender** built over the generated cosmetics attributes (`shared.recommend_cosmetics` — TF-IDF over brand, category, product type, shade, audience and description), while the H&M-trained content/ALS/hybrid/NeuMF models and their quantitative evaluation (Chapters 4–5) remain the academic core and continue to back the analyst-only research pages (Evaluation, Algorithms). This division — a lightweight production recommender for the live cosmetics product, the rigorously-evaluated collaborative models for the empirical study — is itself a finding about the distance between offline recommender research and a shippable storefront, and is revisited at the close of this chapter (§5b.14).
 
-Eleven days of capacity remained when the scoping conversation took place. A full feature tree was prepared (auth + RBAC + four-rail home + catalogue with search + per-card explicit/implicit feedback + retraining loop + analytics dashboard + admin panel) and explicitly **cut down** to a defensible MVP: register/login/logout (no password reset), customer + admin roles only, two-rail home feed, catalogue with category filter (no full-text search), explicit thumbs feedback (no dwell-time tracking), admin-triggered retraining (no automatic loop), single admin page (no analytics dashboard). The cut list is reproduced verbatim in Appendix K as evidence of explicit scope control, not feature inflation.
+## 5b.1 Scope Decisions and Cut List
+
+The platform's scope was managed across two explicit decisions, both documented as evidence of control rather than drift.
+
+**Decision 1 — the MVP cut (auth-gated product).** Eleven days of capacity remained when the first scoping conversation took place. A full feature tree was prepared and deliberately **cut down** to a defensible MVP: register/login/logout (no password reset), customer + admin roles only, two-rail home feed, catalogue with category filter (no full-text search), explicit thumbs feedback (no dwell-time tracking), admin-triggered retraining (no automatic loop), single admin page (no analytics dashboard).
+
+**Decision 2 — the Chiroyli pivot (marketplace).** A subsequent conversation re-scoped the product as a cosmetics marketplace against a concrete, client-style brief of fourteen features (carousel, public browse with an order-time auth gate, on-sale and recommended rails, pagination, faceted filters plus men/women/kids tags, an offline "order now" flow with notifications, a recommendation assistant, reviews and ratings, product comparison, a seller panel, and a gold "Chiroyli" identity). Several Decision-1 cuts were knowingly **reversed** here — persistent login, an analytics dashboard, richer filtering, and two further roles (`analyst`, `seller`) were added back because the marketplace framing made them load-bearing rather than optional. This is presented honestly as a second, scoped decision with a fixed feature list, not as feature creep; the original cut list and the fourteen-feature brief are both reproduced in Appendix K.
 
 ## 5b.2 Architecture
 
-The platform is a Streamlit multipage application sharing the notebook-trained model artefacts via `@st.cache_resource` loaders:
+The platform is a Streamlit multipage application (`st.navigation` router, Streamlit ≥1.50) sharing the notebook-trained model artefacts via `@st.cache_resource` loaders:
 
-- **`app/db.py`** — SQLite at `data/app.db`. Three tables (`users`, `preferences`, `interactions`). All state is derived from the append-only `interactions` log: the current wishlist is `(saves – unsaves – purchases)` replayed; likes / dislikes are similarly derived. This avoids race conditions on toggle state under concurrent reruns and produces a complete audit trail.
-- **`app/auth.py`** — bcrypt-hashed credentials, pure-function design (no Streamlit imports) so the helpers are unit-testable and reusable from CLI seeding scripts.
-- **`app/shared.py`** — all cached loaders, recommenders, and card-rendering helpers. Recommender signatures take **`positives` and `excluded`** as separate sets, so dislikes filter outputs without polluting the ALS fold-in signal.
-- **`app/main.py`** — entry point and home page (two product rails plus a "Compare algorithms" expander that preserves the academic switcher for viva demos).
-- **`app/pages/`** — `1_Catalogue.py`, `2_Wishlist.py` (visible nav), `_product.py`, `_admin.py` (hidden, reached via in-app navigation).
-- **`app/retrain.py`** — refits ALS on a recent slice of H&M transactions plus currently-active platform saves/likes/purchases. Platform users are keyed `"app:<id>"` to avoid collision with H&M customer hashes; platform interactions are weighted 3× to reflect their explicit-feedback character.
+- **`app/db.py`** — SQLite at `data/app.db`. The schema grew with the marketplace to twelve tables: `users`, `preferences`, `interactions`, `login_attempts`, `sessions` (persistent-login tokens), `cart`, `orders` + `order_items`, `reviews`, `notifications`, `seller_products`, and `experiment_bucket`. User-facing state (wishlist, likes, dislikes) is still derived by replaying the append-only `interactions` log — `(saves – unsaves – purchases)` for the wishlist, paired toggle events for likes/dislikes — which avoids race conditions under concurrent reruns and yields a complete audit trail. Relaxing a `CHECK` constraint (e.g. adding the `seller` role) is handled by `_migrate_user_role()`, a self-repairing migration that runs in autocommit with `foreign_keys=OFF` so the table rebuild does not cascade-corrupt child foreign keys — a non-obvious SQLite hazard caught and fixed during this work.
+- **`app/auth.py`** — bcrypt-hashed credentials, pure-function design (no Streamlit imports) so the helpers are unit-testable and reusable from CLI seeding scripts. Four roles are whitelisted: `customer`, `admin`, `analyst` (research dashboards, no admin panel), and `seller` (own listings only).
+- **`app/shared.py`** — all cached loaders, recommenders, card renderers, the cosmetics layer (`load_cosmetics`, `recommend_cosmetics`, the rule-based assistant `cosmetics_assistant_reply`, the compare tray), and the persistent-session helpers. `load_cosmetics()` reads a committed 51-product catalogue (`app/assets/cosmetics_products.csv`) **and unions in active seller listings** from `seller_products`. The H&M recommender signatures take **`positives` and `excluded`** as separate sets so dislikes filter outputs without polluting the ALS fold-in signal.
+- **`app/main.py`** — entry point and router. Four role branches register different page sets (visibility is page registration, not per-page buttons): guests get Home/Catalogue/Compare/Sign-in; admins get Analytics + Admin only; sellers get the Seller panel only; customers/analysts get the full storefront. The cosmetics home renders a carousel, on-sale rail, recommended rail, and the "Ask Chiroyli" assistant.
+- **`app/pages/`** — storefront: `1_Catalogue.py`, `2_Wishlist.py`, `_compare.py` (product comparison), `_product.py` (detail + reviews + add-to-cart + offline order), `_cart.py`/`_checkout.py`/`_success.py`; back-office: `_seller.py`, `_admin.py`, `_analytics.py`; research (analyst): `3_Evaluation.py`, `4_Compare.py`.
+- **`app/retrain.py`** — refits the H&M ALS model on a recent transaction slice plus active platform saves/likes/purchases (admin-triggered). Note this retrains the *research* model, not the cosmetics recommender, which is content-based and rebuilt in-process via `shared.refresh_catalogue()` whenever a seller adds or edits a product.
 
 ## 5b.3 Cold-Start Handling
 
-Newly-signed-up users have no purchase history, which would render both ALS and the content-based profile inert. Two mechanisms address this:
+Newly-signed-up users have no history, which would render any personalised feed inert. The marketplace's cosmetics recommender (`recommend_cosmetics`) handles this directly: a user's profile is the L2-normalised mean of the TF-IDF vectors of their saved items, and when that set is empty it falls back to a **featured ordering** (on-sale items first, then by price) so the "Recommended for you" rail and the home page are never blank — even for a guest who is not signed in at all. Preference categories selected at signup (e.g. *Skincare*, *Makeup*, *Fragrance*) seed the profile before any saves exist.
 
-1. **Preference seeding at signup.** Users select at least three product-type categories (e.g. *dress*, *jeans*, *t-shirt*). The first build of their content-based profile is the L2-normalised mean of TF-IDF vectors of up to 80 catalogue exemplars from those categories.
-2. **Online ALS fold-in.** ALS recommendations use `recalculate_user=True` in the `implicit` library, solving a per-request ridge regression for the user's latent factor from whatever positive signal they have so far. Without this flag, the recommender silently uses whichever H&M customer happened to occupy row 0 of the user matrix — a bug caught during the multi-user smoke test.
-
-The "Picked for you" rail is therefore non-empty for fresh accounts (CB profile from preferences seeds the hybrid), while the "Because you saved X" rail is gated on at least one save. The collaborative-filtering-only tab in the compare expander explicitly tells the user it requires at least one save to fold them in — a design choice favouring legibility over silent fallback.
+The same cold-start problem in the *research* models is solved differently and documented for completeness: the H&M ALS path uses `recalculate_user=True` in the `implicit` library to solve a per-request ridge regression for the user's latent factor from whatever positive signal exists. Without this flag the recommender silently reused whichever H&M customer occupied row 0 of the user matrix — a bug caught during the multi-user smoke test. That path now serves only the analyst Algorithms page, not the live storefront.
 
 ## 5b.4 Explainability
 
@@ -296,7 +299,8 @@ A full retrain on the project's reference droplet (DigitalOcean 4 GB / 2 vCPU) c
 
 - Passwords are bcrypt-hashed with the library default cost; no plaintext is ever persisted.
 - The auth-screen email validator requires a non-trivial TLD; minimum password length is 8 (configurable via `auth.MIN_PASSWORD_LEN`).
-- Admin actions are gated server-side on `user["role"] == "admin"` — the sidebar "Admin panel" button is only rendered for admins, but the page itself re-checks the role and returns an "access denied" view for non-admins who navigate directly. (Defence-in-depth — not just UI hiding.)
+- Role gating is enforced at **page registration** (`st.navigation` registers a different page set per role) *and* re-checked inside sensitive pages — e.g. the seller panel returns an "access denied" view for a non-seller who navigates to `/seller` directly. (Defence-in-depth — not just UI hiding.) The four roles are `customer`, `admin`, `analyst`, `seller`.
+- **Persistent login** uses a signed token stored in an HTTP cookie (`streamlit-cookies-controller`) backed by a server-side `sessions` table with expiry; logout and idle-timeout both clear the cookie so it cannot silently re-authenticate. This resolved the MVP's "browser close logs you out" limitation.
 - SQLite is local to the droplet; no analytics or marketing trackers are loaded. The `interactions` log is per-user and never shared with third parties. See Appendix E (Data Management Plan) for full GDPR mapping.
 
 ## 5b.8 Performance Engineering
@@ -310,10 +314,36 @@ Re-tested GTmetrix at port 80 (nginx-fronted): see §5.4 of `docs/findings_perf.
 
 ## 5b.9 Honest Limitations
 
-- **Session persistence.** Closing the browser logs the user out — the current implementation does not use signed cookies for session resumption. A cookie-manager bolt-on would be a half-day extension.
+- **Recommendation quality on cosmetics is content-only.** Because the collaborative, hybrid and neural models cannot score the generated cosmetics catalogue (no transaction history), the live marketplace relies on a single content-based recommender. The richer collaborative signal demonstrated empirically in Chapters 4–5 is therefore *not* exercised by the shipping product — a genuine limitation of pivoting the storefront to a domain without behavioural data (see §5b.14).
+- **Catalogue scale.** The marketplace catalogue is a curated 51-product set (plus seller additions) with committed photography, not the ≈106k-item H&M catalogue. This keeps the demo coherent and fast but means filtering/search are not stress-tested at scale.
 - **No password reset.** Cut for time; an admin-mediated reset workflow is documented in the README.
-- **Search.** Catalogue browse is filter-only, not full-text search. The H&M catalogue has ≈106k items; a real-search implementation would need an inverted index, which is out of scope for this submission.
-- **Retraining is manual.** The "loop" is operator-triggered, not scheduled. In a real e-commerce platform this would run nightly via cron.
+- **Retraining is manual.** The H&M ALS "loop" is operator-triggered, not scheduled. In a real e-commerce platform this would run nightly via cron.
+
+(The original MVP's session-persistence limitation has since been resolved: persistent login via signed cookies + a server-side `sessions` table was added during the marketplace work — see §5b.7.)
+
+## 5b.10 Marketplace Surfaces
+
+The cosmetics storefront is **public**: guests can browse the home page and catalogue and add items to a comparison tray; the authentication wall only appears at the point of ordering or saving. The home page opens with a three-slide **carousel banner**, an **on-sale rail** (items whose `sale_price` is set, shown with a struck-through original and a gold sale price), and a personalised **recommended rail**. The catalogue offers **pagination** and a faceted filter panel — price, shade, size, brand, quality and country of manufacture — alongside **men / women / kids audience tags** that act as quick filters. Sale-awareness is centralised in `catalogue_price`/`effective_price` so every surface (cards, comparison, cart, seller panel) prices an item identically.
+
+## 5b.11 Reviews, Comparison and the Assistant
+
+Three features bring the product closer to a real marketplace:
+
+- **Reviews and ratings.** Each product page shows an aggregate star rating and the list of customer reviews; signed-in buyers can leave or update a single review (upserted, one per user per product) via the `reviews` table.
+- **Product comparison.** A session-scoped tray (up to four items, added with the ⚖ button on any card or product page) renders an **Asaxiy-style side-by-side table** — price, rating, brand, category, type, audience, shade, size, quality and country — for at-a-glance comparison. The page is public.
+- **"Ask Chiroyli" assistant.** A **rule-based** assistant on the home page (no external LLM) parses a free-text request for category, product type, brand, shade, country, audience, quality, a price cap ("under $30"), on-sale, gift and skin-concern intents, scores the catalogue against those signals, and returns product cards — falling back to featured picks when nothing matches. Implementing this with transparent rules rather than a language model keeps it explainable, offline, and free to run, consistent with the interpretability theme of Chapter 2.
+
+## 5b.12 Cart, Checkout and the Offline "Order Now" Flow
+
+The marketplace supports two purchase paths, reflecting how local Uzbek retailers actually operate. The **online path** is a cart → mock-checkout → confirmation flow (`_cart.py` / `_checkout.py` / `_success.py`) with inline, red-border field validation and a success animation; it records an `order` with status `paid`. The **offline path** is a one-click "Order now" button that reserves the item for in-store collection: it records an `order` with status `offline`, logs a purchase interaction, and posts an in-app **notification** ("…you can come to our market and collect it, paying offline") surfaced through the account-menu bell. Notifications and orders are first-class tables, so both paths produce a real audit trail.
+
+## 5b.13 Seller Panel
+
+A `seller` role turns the catalogue into a small **multi-vendor marketplace**. Seller-listed products live in a `seller_products` table and are **unioned into the live catalogue** by `load_cosmetics()` (seller items take `S`-prefixed IDs to avoid collision with the curated `C`-prefixed set); a seller-supplied image URL is honoured by the image resolver. The panel (`_seller.py`) gives a seller revenue/units/active-listing metrics, a create-and-edit product form, show/hide and delete controls, and a table of the orders placed for their products. Adding or editing a listing calls `shared.refresh_catalogue()` to flush the cached catalogue and its TF-IDF index, so a new product appears in browse, search and recommendations immediately.
+
+## 5b.14 The Recommendation Split — Reflection
+
+The most intellectually honest part of this chapter is the gap it exposes. The empirical study (Chapters 4–5) demonstrates, on real behavioural data, that collaborative and hybrid methods outperform a content-only baseline. Yet the shipping product — once pivoted to a cosmetics domain with **no** transaction history — can only run that content-only baseline, because there is nothing for a collaborative model to learn from. This is not a coding shortcut; it is the cold-start problem at the level of an entire catalogue, and it is exactly the situation a new Uzbek marketplace would face on day one. The defensible engineering response was to ship the recommender the data *can* support (content-based, plus explicit saves and reviews to bootstrap behavioural signal) while keeping the evaluated collaborative models live behind the analyst pages as the evidence base for *what to build next* once real purchase data accrues. The split is therefore presented as a finding, not an apology: it makes concrete the distance between an offline benchmark result and a recommender that can actually be deployed into a cold domain.
 
 ---
 
@@ -341,8 +371,8 @@ Re-tested GTmetrix at port 80 (nginx-fronted): see §5.4 of `docs/findings_perf.
 
 ## 6.4 Recommendations
 
-### 6.4.1 For Practitioners (Local Uzbek Marketplaces)
-[3–5 concrete recommendations: e.g. start with ALS as baseline; deploy hybrid only after measuring; budget for NCF only if expected uplift > engineering cost.]
+### 6.4.1 For Practitioners (Local Uzbek Marketplaces such as Chiroyli)
+[3–5 concrete recommendations: e.g. on day one in a cold domain ship content-based recommendations and capture explicit signal (saves, reviews) to bootstrap behavioural data; introduce ALS as a baseline only once purchase history accrues; deploy the hybrid only after measuring uplift; budget for NCF only if expected uplift > engineering cost. Tie each back to the Chiroyli artefact's actual design choices (Chapter 5b).]
 
 ### 6.4.2 For Future Researchers
 [3–5 directions: see Chapter 5.9.]
