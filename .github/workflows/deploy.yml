@@ -40,6 +40,18 @@ jobs:
             .venv/bin/python -m app.auth seed-demos || true
             echo "==> Restarting Streamlit"
             systemctl restart streamlit
-            sleep 3
-            systemctl is-active streamlit
+            echo "==> Waiting for app to respond (models take time to load)"
+            for i in $(seq 1 20); do
+              sleep 3
+              code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://localhost:8501/ || true)
+              if [ "$code" = "200" ]; then
+                echo "App healthy (HTTP 200) after ~$((i*3))s"
+                break
+              fi
+              if [ "$i" = "20" ]; then
+                echo "ERROR: app did not return HTTP 200 within 60s"
+                journalctl -u streamlit -n 40 --no-pager
+                exit 1
+              fi
+            done
             echo "==> Deployed commit: $(git rev-parse --short HEAD)"
