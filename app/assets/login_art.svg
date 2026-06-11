@@ -4,33 +4,42 @@
       <stop offset="0" stop-color="#FBF3DE"/>
       <stop offset="1" stop-color="#EAD5A0"/>
     </linearGradient>
-    <radialGradient id="sun" cx="0.42" cy="0.4" r="0.62">
-      <stop offset="0" stop-color="#E6C878"/>
-      <stop offset="1" stop-color="#C19A3E"/>
-    </radialGradient>
+    <linearGradient id="sun" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#EBCF86"/>
+      <stop offset="0.5" stop-color="#C19A3E"/>
+      <stop offset="1" stop-color="#8A6D22"/>
+    </linearGradient>
+    <clipPath id="discClip"><circle cx="20" cy="20" r="18"/></clipPath>
   </defs>
 
   <rect width="900" height="1240" fill="url(#bg)"/>
 
-  <!-- editorial gold circle + thin outer ring -->
-  <circle cx="470" cy="520" r="288" fill="url(#sun)"/>
+  <!-- thin outer ring -->
   <circle cx="470" cy="520" r="350" fill="none" stroke="#C19A3E" stroke-opacity="0.20" stroke-width="2"/>
 
-  <!-- minimalist serum dropper bottle (beauty motif), white line-art, centred -->
-  <g stroke="#ffffff" stroke-width="5" fill="none" stroke-linecap="round" stroke-linejoin="round">
-    <!-- dropper cap + bulb -->
-    <rect x="438" y="300" width="64" height="34" rx="8"/>
-    <path d="M470 334 V360"/>
-    <path d="M470 360 c -16 0 -16 22 0 22 c 16 0 16 -22 0 -22 Z" fill="#ffffff" fill-opacity="0.25"/>
-    <!-- bottle body -->
-    <path d="M408 470
-             C 408 430, 532 430, 532 470
-             L 532 720
-             C 532 792, 408 792, 408 720 Z"
-          fill="#ffffff" fill-opacity="0.30"/>
-    <!-- neck -->
-    <path d="M448 470 V440 H492 V470"/>
-    <!-- liquid line -->
-    <path d="M408 600 C 470 624, 470 576, 532 600" stroke-opacity="0.85"/>
+  <!-- Barakaly emblem (project logo): gold disc + woman profile + flowing hair -->
+  <g transform="translate(150,200) scale(16)">
+    <circle cx="20" cy="20" r="18" fill="url(#sun)"/>
+    <g clip-path="url(#discClip)">
+      <path fill="#FBF7EE" d="M2 2 H22
+        C 19.4 5.6, 17.6 8.4, 17.4 11.4
+        C 17.3 13.2, 15.1 13.9, 15.4 15.4
+        C 15.6 16.5, 17.0 16.6, 16.7 17.6
+        C 16.4 18.7, 17.3 19.0, 17.0 20.1
+        C 16.7 21.4, 18.2 22.6, 19.4 23.3
+        C 21.2 24.4, 21.8 26.2, 21.8 28.6
+        L 21.8 42 H2 Z"/>
+      <path fill="none" stroke="#8A6D22" stroke-width="1.4" stroke-linecap="round"
+        d="M24 5 C 31 12, 31 24, 25.5 33"/>
+      <path fill="none" stroke="#A07E2C" stroke-width="1.2" stroke-linecap="round"
+        d="M22 7 C 27.5 13, 27.5 23, 23.5 31"/>
+    </g>
+    <circle cx="20" cy="20" r="18" fill="none" stroke="#8A6D22" stroke-width="0.7" opacity="0.45"/>
+  </g>
+
+  <!-- faint sparkle motif -->
+  <g fill="#C19A3E" fill-opacity="0.18">
+    <path d="M180 240 c12 28, 24 40, 52 52 c-28 12, -40 24, -52 52 c-12 -28, -24 -40, -52 -52 c28 -12, 40 -24, 52 -52 Z"/>
+    <path d="M760 880 c9 21, 18 30, 39 39 c-21 9, -30 18, -39 39 c-9 -21, -18 -30, -39 -39 c21 -9, 30 -18, 39 -39 Z"/>
   </g>
 </svg>
