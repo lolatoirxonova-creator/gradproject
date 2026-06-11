@@ -36,38 +36,55 @@ def main():
     articles = shared.load_articles()
     by_id = articles.set_index("article_id")
 
-    # Celebrate once per order (balloons fire on first landing for this order).
-    if st.session_state.get("celebrated_order") != order["id"]:
-        st.balloons()
-        st.session_state["celebrated_order"] = order["id"]
-
-    # Animated success checkmark (CSS draw-in).
+    # On-brand gold success animation: a gold checkmark that draws in, ringed by a
+    # radiating sparkle burst that echoes the site's gold sparkle motif. (Replaces
+    # Streamlit's off-brand red/green/blue st.balloons.)
+    _sparkle_dirs = [(0, -62), (44, -44), (62, 0), (44, 44),
+                     (0, 62), (-44, 44), (-62, 0), (-44, -44)]
+    _sparkles = "".join(
+        f'<i style="--dx:{dx}px;--dy:{dy}px;animation-delay:{0.28 + i * 0.02:.2f}s;">✦</i>'
+        for i, (dx, dy) in enumerate(_sparkle_dirs)
+    )
     st.markdown(
         """
 <style>
   @keyframes pop  { 0%{transform:scale(0)} 70%{transform:scale(1.12)} 100%{transform:scale(1)} }
   @keyframes draw { to { stroke-dashoffset: 0; } }
-  .ok-wrap { display:flex; justify-content:center; margin: 8px 0 18px; }
-  .ok-circle {
-    width:84px; height:84px; border-radius:50%;
-    background: radial-gradient(120% 120% at 50% 30%, #2ea043 0%, #1a7f37 100%);
-    display:flex; align-items:center; justify-content:center;
-    animation: pop .45s cubic-bezier(.2,.8,.2,1) both;
-    box-shadow: 0 12px 30px -8px rgba(26,127,55,.5);
+  @keyframes sparkle {
+    0%   { transform: translate(0,0) scale(0); opacity: 0; }
+    35%  { opacity: 1; }
+    100% { transform: translate(var(--dx), var(--dy)) scale(1); opacity: 0; }
   }
-  .ok-circle svg path { stroke-dasharray: 48; stroke-dashoffset: 48; animation: draw .4s .25s ease forwards; }
+  .ok-wrap { position: relative; display:flex; justify-content:center; align-items:center;
+             height: 116px; margin: 6px 0 16px; }
+  .ok-circle {
+    width:88px; height:88px; border-radius:50%; position: relative; z-index: 2;
+    background: radial-gradient(120% 120% at 50% 30%, #e6c878 0%, #c19a3e 55%, #a07e2c 100%);
+    display:flex; align-items:center; justify-content:center;
+    animation: pop .5s cubic-bezier(.2,.8,.2,1) both;
+    box-shadow: 0 16px 40px -10px rgba(193,154,62,.6);
+  }
+  .ok-circle svg path { stroke-dasharray: 48; stroke-dashoffset: 48; animation: draw .45s .3s ease forwards; }
+  .ok-burst { position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+              z-index:1; pointer-events:none; }
+  .ok-burst i { position:absolute; color: var(--accent); font-size: 15px; opacity:0;
+                animation: sparkle .95s ease-out forwards; }
 </style>
-<div class="ok-wrap"><div class="ok-circle">
-  <svg width="44" height="44" viewBox="0 0 24 24" fill="none">
-    <path d="M5 13l4 4L19 7" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
-  </svg>
-</div></div>
+<div class="ok-wrap">
+  <div class="ok-burst">"""
+        + _sparkles
+        + """</div>
+  <div class="ok-circle">
+    <svg width="44" height="44" viewBox="0 0 24 24" fill="none">
+      <path d="M5 13l4 4L19 7" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+  </div>
+</div>
 """,
         unsafe_allow_html=True,
     )
 
-    st.markdown('<div style="text-align:center;"><span class="pill" '
-                'style="background:rgba(46,160,67,0.12);color:#1a7f37;">Payment successful</span></div>',
+    st.markdown('<div style="text-align:center;"><span class="pill">Payment successful</span></div>',
                 unsafe_allow_html=True)
     st.markdown(f"<h1 class='hero-headline' style='text-align:center;'>Order #{order['id']} confirmed.</h1>",
                 unsafe_allow_html=True)
@@ -91,11 +108,14 @@ def main():
     st.markdown(f"<h2 style='margin-top:0 !important;'>Total paid: ${order['total']:,.2f}</h2>",
                 unsafe_allow_html=True)
 
-    b1, b2 = st.columns(2)
+    b1, b2, b3 = st.columns(3)
     if b1.button("Continue shopping", type="primary", use_container_width=True):
         st.session_state.pop("last_order_id", None)
         st.switch_page("pages/1_Catalogue.py")
-    if b2.button("View wishlist", use_container_width=True):
+    if b2.button("Payment history", use_container_width=True):
+        st.session_state.pop("last_order_id", None)
+        st.switch_page("pages/_orders.py")
+    if b3.button("View wishlist", use_container_width=True):
         st.session_state.pop("last_order_id", None)
         st.switch_page("pages/2_Wishlist.py")
 

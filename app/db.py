@@ -500,6 +500,24 @@ def get_order(order_id: int) -> dict | None:
     return d
 
 
+def user_orders(user_id: int) -> list[dict]:
+    """All orders a user has placed (online `paid` + offline `offline`), newest
+    first, each with its line items — powers the profile's payment history."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC, id DESC",
+            (user_id,),
+        ).fetchall()
+        orders = [dict(r) for r in rows]
+        for o in orders:
+            items = conn.execute(
+                "SELECT article_id, quantity, unit_price FROM order_items WHERE order_id = ?",
+                (o["id"],),
+            ).fetchall()
+            o["items"] = [dict(it) for it in items]
+    return orders
+
+
 # ---------- product reviews ----------
 
 def add_review(user_id: int, article_id: str, rating: int, comment: str = "") -> None:

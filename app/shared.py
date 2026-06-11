@@ -47,10 +47,27 @@ def curated_set() -> set:
 
 # ---------- product comparison (Asaxiy-style, session-scoped) ----------
 COMPARE_MAX = 4
+_COMPARE_COOKIE = "bk_compare"
 
 
 def compare_ids() -> list:
-    return st.session_state.get("compare_ids", [])
+    """Article IDs in the compare tray. Persisted in a cookie so it survives the
+    full-page reloads triggered by clicking a card link (#3)."""
+    if "compare_ids" not in st.session_state:
+        try:
+            raw = st.context.cookies.get(_COMPARE_COOKIE) or ""
+        except Exception:
+            raw = ""
+        st.session_state["compare_ids"] = [a for a in raw.split(",") if a][:COMPARE_MAX]
+    return st.session_state["compare_ids"]
+
+
+def _persist_compare(lst: list) -> None:
+    try:
+        _cookie_controller().set(_COMPARE_COOKIE, ",".join(lst),
+                                 max_age=86400, same_site="lax", path="/")
+    except Exception:
+        pass
 
 
 def in_compare(article_id: str) -> bool:
@@ -68,6 +85,12 @@ def toggle_compare(article_id: str) -> None:
         st.toast(f"Compare holds up to {COMPARE_MAX} items — remove one first.", icon="⚖️")
         return
     st.session_state["compare_ids"] = lst
+    _persist_compare(lst)
+
+
+def clear_compare() -> None:
+    st.session_state["compare_ids"] = []
+    _persist_compare([])
 
 
 def render_brand() -> None:
@@ -100,23 +123,49 @@ def _login_art_data_uri() -> str:
     return ""
 
 
-def render_carousel() -> None:
-    """3-slide cross-fading promo banner for the home page (CSS-only)."""
+def render_carousel(catalogue: "pd.DataFrame | None" = None) -> None:
+    """3-slide cross-fading promo banner — each themed slide shows real product
+    images: on-sale, popular/bestsellers, and giftable picks (#1)."""
+    df = catalogue if catalogue is not None else load_articles()
+    by_id = df.set_index(df["article_id"].astype(str))
+
+    def shots(ids: list) -> str:
+        imgs = []
+        for aid in ids[:3]:
+            item = by_id.loc[aid].to_dict() if aid in by_id.index else None
+            imgs.append(f'<img src="{_resolve_image_src(str(aid), item, width=300, height=380)}" alt="" />')
+        return "".join(imgs)
+
+    all_ids = df["article_id"].astype(str).tolist()
+    sale_ids = (df[df["sale_price"].notna()]["article_id"].astype(str).tolist()
+                if "sale_price" in df.columns else [])
+    if "quality" in df.columns:
+        lux = df[df["quality"] == "Luxury"]["article_id"].astype(str).tolist()
+        prem = df[df["quality"].isin(["Premium", "Luxury"])]["article_id"].astype(str).tolist()
+    else:
+        lux, prem = [], []
+    # de-dupe across slides so they don't show the same three items
+    sale_ids = (sale_ids or all_ids)[:3]
+    pop_ids = ([a for a in prem if a not in sale_ids] or all_ids)[:3]
+    used = set(sale_ids) | set(pop_ids)
+    gift_ids = ([a for a in lux if a not in used] or [a for a in all_ids if a not in used] or all_ids)[:3]
+
     slides = [
-        ("New season", "Skincare that loves you back",
-         "Serums, moisturisers &amp; masks — curated for your routine.",
-         "linear-gradient(120deg,#caa24a 0%,#8a6d22 100%)"),
-        ("This week · up to 35% off", "Fragrance, on sale",
-         "Signature scents at their best price — while stocks last.",
-         "linear-gradient(120deg,#b8893a 0%,#6f5418 100%)"),
-        ("Chiroyli", "Beauty, curated for you",
-         "Skincare · Makeup · Fragrance · Hair &amp; body, picked for your taste.",
-         "linear-gradient(120deg,#c19a3e 0%,#9a7a2c 100%)"),
+        ("This week · on sale", "Beauty, on sale",
+         "Limited-time prices on serums, scents &amp; more — while they last.",
+         "linear-gradient(120deg,#b8893a 0%,#6f5418 100%)", sale_ids),
+        ("Bestsellers", "Loved by everyone",
+         "The most popular picks across skincare, makeup &amp; fragrance.",
+         "linear-gradient(120deg,#caa24a 0%,#8a6d22 100%)", pop_ids),
+        ("Gifting", "Gifts for your closest",
+         "Luxe sets &amp; signature scents — beautifully giftable.",
+         "linear-gradient(120deg,#c19a3e 0%,#9a7a2c 100%)", gift_ids),
     ]
     inner = "".join(
         f'<div class="slide" style="background:{grad};">'
-        f'<span class="tag">{tag}</span><h2>{title}</h2><p>{sub}</p></div>'
-        for tag, title, sub, grad in slides
+        f'<div class="copy"><span class="tag">{tag}</span><h2>{title}</h2><p>{sub}</p></div>'
+        f'<div class="shots">{shots(ids)}</div></div>'
+        for tag, title, sub, grad, ids in slides
     )
     st.markdown(f'<div class="carousel">{inner}<div class="dots"><i></i><i></i><i></i></div></div>',
                 unsafe_allow_html=True)
@@ -134,6 +183,11 @@ def render_auth_panel() -> None:
     st.markdown(
         f"""
 <style>
+  /* Auth screen: no sidebar or its collapsed-reopen control (#15). Scoped here
+     because this CSS only renders while logged out. */
+  [data-testid="stSidebar"],
+  [data-testid="stExpandSidebarButton"],
+  [data-testid="stSidebarCollapsedControl"] {{ display: none !important; }}
   /* Pin the form/hero to a left column. stMain is a flex COLUMN with
      align-items:center, so margins alone keep it centered — align-self:flex-start
      is what actually left-aligns it. Higher specificity ([stMain] prefix) beats
@@ -168,7 +222,7 @@ def render_auth_panel() -> None:
     }}
   }}
 </style>
-<div class="auth-photo"><div class="ap-brand">Chiroyli<span class="dot">.</span></div></div>
+<div class="auth-photo"><div class="ap-brand">Barakaly<span class="dot">.</span></div></div>
 """,
         unsafe_allow_html=True,
     )
@@ -358,6 +412,19 @@ def _resolve_image_src(article_id: str, item: dict | None,
     return _picsum_fallback_url(aid, width, height)
 
 
+def cosmetics_gallery(article_id: str, item: dict | None = None) -> list[str]:
+    """Image sources for a product's gallery (#8): the primary photo plus any
+    committed extras at app/assets/cosmetics/{aid}_2.jpg, _3.jpg, _4.jpg."""
+    import base64
+    aid = str(article_id)
+    srcs = [_resolve_image_src(aid, item, width=640, height=640)]
+    for n in (2, 3, 4):
+        p = ASSETS_DIR / "cosmetics" / f"{aid}_{n}.jpg"
+        if p.exists() and p.stat().st_size > 1024:
+            srcs.append("data:image/jpeg;base64," + base64.b64encode(p.read_bytes()).decode())
+    return srcs
+
+
 # Product-type → Loremflickr keyword. H&M product_type_name values are
 # fine-grained ("Vest top", "Sweatshirt", "Espadrilles") and Flickr's tag
 # vocabulary is broader, so we map to ~15 well-tagged generic categories.
@@ -522,14 +589,22 @@ CUSTOM_CSS = """
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140' viewBox='0 0 140 140'%3E%3Cpath d='M70 50 C72 62 78 68 90 70 C78 72 72 78 70 90 C68 78 62 72 50 70 C62 68 68 62 70 50 Z' fill='%23c19a3e' fill-opacity='0.07'/%3E%3C/svg%3E");
     background-size: 140px 140px;
   }
-  #MainMenu, footer, [data-testid="stToolbar"], header[data-testid="stHeader"] { display: none; }
+  /* Hide the menu/deploy chrome but NOT the whole toolbar — the sidebar reopen
+     control (stExpandSidebarButton) is nested inside stToolbar, so hiding the
+     toolbar wholesale removed the only way to reopen a collapsed sidebar (#14). */
+  #MainMenu, footer,
+  [data-testid="stMainMenu"], [data-testid="stMainMenuButton"],
+  [data-testid="stToolbarActions"], [data-testid="stAppDeployButton"],
+  [data-testid="stHeaderActionElements"] { display: none !important; }
+  header[data-testid="stHeader"] { background: transparent !important; box-shadow: none !important; }
+  [data-testid="stExpandSidebarButton"] { display: flex !important; z-index: 1003 !important; }
   .block-container,
   [data-testid="stMainBlockContainer"] {
     max-width: 1600px;
     margin-left: auto !important;     /* centre on wide monitors — no big right gap */
     margin-right: auto !important;
     padding-top: 2.5rem;
-    padding-bottom: 4rem;
+    padding-bottom: 7rem;             /* breathing room so cards don't hug the footer (#9) */
     padding-left: 3rem; padding-right: 3rem;
     min-height: 920px;
     position: relative; z-index: 1;   /* sit above the fixed grain overlay */
@@ -551,7 +626,8 @@ CUSTOM_CSS = """
   /* Reached via buttons, not the menu — hide these nav entries. */
   [data-testid="stSidebar"] [data-testid="stSidebarNav"] a[href$="/product"],
   [data-testid="stSidebar"] [data-testid="stSidebarNav"] a[href$="/checkout"],
-  [data-testid="stSidebar"] [data-testid="stSidebarNav"] a[href$="/success"] {
+  [data-testid="stSidebar"] [data-testid="stSidebarNav"] a[href$="/success"],
+  [data-testid="stSidebar"] [data-testid="stSidebarNav"] a[href$="/orders"] {
     display: none !important;
   }
 
@@ -882,12 +958,89 @@ CUSTOM_CSS = """
     background: var(--accent-soft); color: var(--accent-2);
     font-size: 11px; font-weight: 600;
   }
+
+  /* ===== Whole-card click — a transparent button overlays the card (#3) ===== */
+  div[class*="st-key-cw_"] { position: relative !important; }
+  div[class*="st-key-cw_"] > div[data-testid="stVerticalBlock"] { gap: 0 !important; }
+  div[class*="st-key-cl_"] {
+    position: absolute !important; inset: 0 !important; z-index: 4 !important;
+    margin: 0 !important; padding: 0 !important; height: 100% !important;
+  }
+  div[class*="st-key-cl_"] .stButton,
+  div[class*="st-key-cl_"] .stButton > button {
+    height: 100% !important; width: 100% !important;
+  }
+  div[class*="st-key-cl_"] button {
+    opacity: 0 !important; min-height: 100% !important; border: none !important;
+    background: transparent !important; cursor: pointer !important; box-shadow: none !important;
+  }
+  /* hover-lift driven by the wrapper so it still works under the overlay */
+  div[class*="st-key-cw_"]:hover .card {
+    transform: translateY(-6px); box-shadow: var(--shadow-2); border-color: var(--border-2);
+  }
+
+  /* ===== Product gallery thumbnails (#8) ===== */
+  .pthumbs { display: flex; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+  .pthumb {
+    display: block; width: 76px; height: 76px; border-radius: 12px; overflow: hidden;
+    border: 2px solid var(--border); transition: border-color .15s ease;
+  }
+  .pthumb.active { border-color: var(--accent); }
+  .pthumb:hover { border-color: var(--accent-2); }
+  .pthumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+  /* ===== Product one-line description + rating (#7) ===== */
+  .desc-rating {
+    font-size: 14px; color: var(--ink-2); line-height: 1.5; margin: 0 0 14px;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+
+  /* ===== Inputs: keep placeholder inside the field, clear of trailing icons (#16) ===== */
+  [data-baseweb="input"], [data-baseweb="base-input"] { overflow: hidden !important; }
+  [data-testid="stTextInputRootElement"] { overflow: hidden !important; }
+  [data-testid="stTextInput"] input,
+  [data-testid="stNumberInput"] input,
+  [data-testid="stTextArea"] textarea {
+    text-overflow: ellipsis;
+  }
+  [data-testid="stTextInput"] input::placeholder,
+  [data-testid="stTextArea"] textarea::placeholder {
+    color: var(--muted); opacity: 0.85;
+  }
+
+  /* ===== Home category shortcuts (#6) ===== */
+  .shortcut-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 6px 0 4px; }
+  @media (max-width: 760px) { .shortcut-grid { grid-template-columns: repeat(2, 1fr); } }
+
+  /* ===== Carousel product-image strip (#1) ===== */
+  .carousel .slide { flex-direction: row !important; align-items: center; gap: 28px; }
+  .carousel .slide .copy { flex: 0 0 40%; }
+  .carousel .slide .shots { display: flex; gap: 12px; flex: 1; justify-content: flex-end; }
+  .carousel .slide .shots img {
+    width: 150px; height: 188px; object-fit: cover; border-radius: 14px;
+    box-shadow: 0 10px 28px -10px rgba(0,0,0,0.45); border: 2px solid rgba(255,255,255,0.5);
+  }
+  @media (max-width: 900px) { .carousel .slide .shots img:nth-child(n+3) { display: none; } }
 </style>
 """
 
 
 def apply_css() -> None:
     st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+
+
+def scroll_to_top_if_flagged() -> None:
+    """Scroll the main panel to the top once, if a prior action set
+    st.session_state['_scroll_top'] (e.g. after login or a home shortcut), so the
+    user doesn't land scrolled into the middle of a list (#17)."""
+    if st.session_state.pop("_scroll_top", False):
+        import streamlit.components.v1 as components
+        components.html(
+            "<script>setTimeout(function(){var d=window.parent.document;"
+            "var m=d.querySelector('section.main')||d.querySelector('[data-testid=\"stMain\"]');"
+            "if(m){m.scrollTo(0,0);} window.parent.scrollTo(0,0);},40);</script>",
+            height=0,
+        )
 
 
 # ---------- cached loaders (shared across pages) ----------
@@ -1949,6 +2102,11 @@ def render_account_menu(user: dict) -> None:
                 st.rerun()
             st.markdown('<div class="divider" style="margin:6px 0 !important;"></div>', unsafe_allow_html=True)
 
+        # Payment history (only roles with a storefront / orders page registered).
+        if role in ("customer", "analyst"):
+            if st.button("🧾  Payment history", use_container_width=True, key="acct_orders"):
+                st.switch_page("pages/_orders.py")
+
         if st.button("Log out", use_container_width=True, key="acct_logout"):
             clear_session()  # revoke server-side session + clear the browser cookie
             for k in list(st.session_state.keys()):
@@ -2070,33 +2228,33 @@ def _render_actions(article_id: str, key_prefix: str,
                 toggle_compare(article_id)
                 st.rerun()
 
+    # The whole card is a link to the detail page (#3); the action row below it
+    # leads with Add-to-cart (#4), then wishlist + compare.
     if user_id is not None and saved_set is not None:
-        b1, b2, b3, b4 = st.columns([2, 1, 1, 1])  # View, add-to-cart, heart, compare
+        b1, b2, b3 = st.columns([2, 1, 1])  # Add to cart, heart, compare
         with b1:
-            if st.button("View →", key=f"{key_prefix}_view_{article_id}",
-                         use_container_width=True,
-                         help="Open product detail"):
-                st.session_state["viewing_article_id"] = article_id
-                st.switch_page("pages/_product.py")
-        with b2:
             in_cart = bool(cart_set) and article_id in cart_set
-            if st.button("✓" if in_cart else "🛒",
+            if st.button("✓  In cart" if in_cart else "🛒  Add to cart",
                          key=f"{key_prefix}_cart_{article_id}",
-                         type="primary" if in_cart else "secondary",
+                         type="primary",
                          use_container_width=True,
                          help="In your cart — add another" if in_cart else "Add to cart"):
                 db.add_to_cart(user_id, article_id, 1)
                 st.toast("Added to cart", icon="🛒")
                 st.rerun()
-        with b3:
+        with b2:
             _save_toggle(article_id, user_id, article_id in saved_set, key=f"{key_prefix}_save_{article_id}")
-        _compare_btn(b4)
+        _compare_btn(b3)
     else:
-        b1, b2 = st.columns([3, 1])  # View, compare (guest)
+        b1, b2 = st.columns([3, 1])  # Add to cart (→ sign in), compare (guest)
         with b1:
-            if st.button("View →", key=f"{key_prefix}_view_{article_id}", use_container_width=True):
-                st.session_state["viewing_article_id"] = article_id
-                st.switch_page("pages/_product.py")
+            if st.button("🛒  Add to cart", key=f"{key_prefix}_cart_{article_id}",
+                         type="primary", use_container_width=True, help="Sign in to add to cart"):
+                page = st.session_state.get("_signin_page")
+                if page is not None:
+                    st.switch_page(page)
+                else:
+                    st.toast("Please sign in to add to cart.", icon="🔒")
         _compare_btn(b2)
 
     if user_id is not None and liked_set is not None and disliked_set is not None:
@@ -2121,9 +2279,19 @@ def _card_match_chip(score: float | None) -> str:
     return f'<span class="card-match {klass}">{pct}% match</span>'
 
 
+def product_href(article_id: str) -> str:
+    """Relative URL to the product detail page (resolves to /product from any
+    single-segment page path). Used to make whole cards clickable links (#3)."""
+    return f"product?aid={article_id}"
+
+
 def _card_html(item: dict, rank: int | None = None,
-               score: float | None = None, reason: str | None = None) -> str:
-    """Render the full image-led card body (image, match chip, title, meta, reason)."""
+               score: float | None = None, reason: str | None = None,
+               href: str | None = None) -> str:
+    """Render the full image-led card body (image, match chip, title, meta, reason).
+
+    When `href` is given the whole card is wrapped in a link to the product page.
+    """
     aid = str(item["article_id"])
     img_src = _resolve_image_src(aid, item)
     rank_html = f'<span class="card-rank-badge">{rank}</span>' if rank else ""
@@ -2153,7 +2321,7 @@ def _card_html(item: dict, rank: int | None = None,
     # in the sidebar's Display options.
     show_id = st.session_state.get("show_tech_details", False)
     id_html = f'<p class="card-id">{aid}</p>' if show_id else ""
-    return (
+    body = (
         '<div class="card">'
         '  <div class="card-image-wrapper">'
         f'    <img class="card-image" src="{img_src}" loading="lazy" alt="{name}" />'
@@ -2169,6 +2337,9 @@ def _card_html(item: dict, rank: int | None = None,
         '  </div>'
         '</div>'
     )
+    if href:
+        return f'<a class="card-link" href="{href}" target="_self">{body}</a>'
+    return body
 
 
 def _coerce_recs(recs) -> tuple[list[str], dict]:
@@ -2201,15 +2372,20 @@ def render_rec_cards(rec_ids, articles: pd.DataFrame, key_prefix: str = "rec",
         for col, (_, item) in zip(row_cols, rec_df.iloc[i: i + 2].iterrows()):
             with col:
                 d = item.to_dict()
-                st.markdown(
-                    _card_html(
-                        d,
-                        rank=int(d["rank"]),
-                        score=scores.get(d["article_id"]),
-                        reason=(reasons or {}).get(d["article_id"]),
-                    ),
-                    unsafe_allow_html=True,
-                )
+                aid = str(d["article_id"])
+                with st.container(key=f"cw_{key_prefix}_{aid}"):
+                    st.markdown(
+                        _card_html(
+                            d,
+                            rank=int(d["rank"]),
+                            score=scores.get(d["article_id"]),
+                            reason=(reasons or {}).get(d["article_id"]),
+                        ),
+                        unsafe_allow_html=True,
+                    )
+                    if st.button("View product", key=f"cl_{key_prefix}_{aid}"):  # transparent overlay (#3)
+                        st.session_state["viewing_article_id"] = aid
+                        st.switch_page("pages/_product.py")
                 _render_actions(
                     d["article_id"], key_prefix,
                     user_id=user_id, saved_set=saved_set,
@@ -2224,12 +2400,14 @@ def render_catalogue_card(item: dict, key_prefix: str,
                           reason: str | None = None, score: float | None = None,
                           cart_set: set | None = None) -> None:
     """Unranked card (used in browse/wishlist grids and rails)."""
-    st.markdown(
-        _card_html(item, rank=None, score=score, reason=reason),
-        unsafe_allow_html=True,
-    )
+    aid = str(item["article_id"])
+    with st.container(key=f"cw_{key_prefix}_{aid}"):
+        st.markdown(_card_html(item, rank=None, score=score, reason=reason), unsafe_allow_html=True)
+        if st.button("View product", key=f"cl_{key_prefix}_{aid}"):  # transparent overlay (#3)
+            st.session_state["viewing_article_id"] = aid
+            st.switch_page("pages/_product.py")
     _render_actions(
-        item["article_id"], key_prefix,
+        aid, key_prefix,
         user_id=user_id, saved_set=saved_set,
         liked_set=liked_set, disliked_set=disliked_set,
         cart_set=cart_set,

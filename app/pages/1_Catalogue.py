@@ -1,8 +1,10 @@
-"""Catalogue browse — search, filters, tags, paginated grid.
+"""Catalogue browse — search, filters (in a modal), tags, paginated grid.
 
-Cosmetics mode (Chiroyli): men/women/children tags + filters on category, brand,
-quality, size, made-in, shade and price. H&M mode keeps the original fashion
-filters. Clicking View on any card opens the product detail page.
+Cosmetics mode (Barakaly): all facet filters live behind one "Filters" button
+that opens a modal (men/women/kids tags + category, brand, type, quality, size,
+made-in, shade, price), with Clear / Apply / Close. Filter state is kept in
+non-widget `f_*` session keys so it survives reruns and home shortcuts. H&M mode
+keeps the original inline fashion filters. Clicking a card opens its detail page.
 """
 
 from __future__ import annotations
@@ -20,6 +22,13 @@ from app import db, shared
 PAGE_SIZE = 24
 PRICE_DISPLAY_SCALE = 1000.0  # H&M-normalised price → $ (fashion mode only)
 
+# Persistent (non-widget) filter state — survives reruns + set by home shortcuts.
+FILTER_DEFAULTS = {
+    "f_tag": "All", "f_category": "All", "f_brand": [], "f_type": [],
+    "f_quality": [], "f_size": [], "f_made": [], "f_shade": [], "f_price": None,
+}
+TAGS = ["All", "Women", "Men", "Kids"]
+
 
 def _opts(series):
     return sorted({str(v) for v in series.dropna() if str(v).strip() and str(v) != "—"})
@@ -31,82 +40,130 @@ def _multiselect(label, series, key):
                           placeholder=f"All {label.lower()}", key=key)
 
 
+def _fget(key):
+    return st.session_state.get(key, FILTER_DEFAULTS[key])
+
+
 # ---------------------------------------------------------------- cosmetics
-def _cosmetics_filter_ui(articles):
-    """Render search + audience tags + cosmetics filters; return (filtered_df, signature)."""
-    st.markdown('<div class="field-label">Search</div>', unsafe_allow_html=True)
-    query = st.text_input("Search", placeholder="e.g. serum, lipstick, perfume",
-                          label_visibility="collapsed", key="cat_query")
+def _price_bounds(articles):
+    eff = [shared.effective_price(a) for a in articles["article_id"].astype(str)]
+    eff = [v for v in eff if v] or [0.0, 1.0]
+    return float(int(min(eff))), float(int(max(eff)) + 1)
 
-    # men / women / children tags (#8)
-    st.markdown('<div class="field-label">Shop for</div>', unsafe_allow_html=True)
-    tag = st.radio("Shop for", ["All", "Women", "Men", "Kids"], horizontal=True,
-                   label_visibility="collapsed", key="cat_tag")
 
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown('<div class="field-label">Category</div>', unsafe_allow_html=True)
-        category = st.selectbox("Category", ["All", *_opts(articles["category"])],
-                                label_visibility="collapsed", key="cat_category")
-    with c2:
-        brands = _multiselect("Brand", articles["brand"], "cat_brand")
+def _active_count():
+    n = 0
+    if _fget("f_tag") != "All":
+        n += 1
+    if _fget("f_category") != "All":
+        n += 1
+    for k in ("f_brand", "f_type", "f_quality", "f_size", "f_made", "f_shade"):
+        if _fget(k):
+            n += 1
+    if _fget("f_price") is not None:
+        n += 1
+    return n
 
-    with st.expander("More filters — type, quality, size, made-in, shade"):
-        scope = articles if category == "All" else articles[articles["category"] == category]
-        f1, f2, f3 = st.columns(3)
-        with f1:
-            types = _multiselect("Type", scope["product_type_name"], "cat_type")
-        with f2:
-            qualities = _multiselect("Quality", articles["quality"], "cat_quality")
-        with f3:
-            sizes = _multiselect("Size", articles["size"], "cat_size")
-        g1, g2 = st.columns(2)
-        with g1:
-            made_ins = _multiselect("Made in", articles["made_in"], "cat_made")
-        with g2:
-            shades = _multiselect("Shade", articles["colour_group_name"], "cat_shade")
 
-    # price slider over effective (sale-aware) prices
-    eff = {a: shared.effective_price(a) for a in articles["article_id"].astype(str)}
-    vals = [v for v in eff.values() if v] or [0.0, 1.0]
-    lo_v, hi_v = float(min(vals)), float(max(vals))
-    st.markdown('<div class="field-label">Price ($)</div>', unsafe_allow_html=True)
-    price_range = st.slider("Price", min_value=float(int(lo_v)), max_value=float(int(hi_v) + 1),
-                            value=(float(int(lo_v)), float(int(hi_v) + 1)), step=1.0,
-                            label_visibility="collapsed", key="cat_price")
-
-    # ---- filter ----
+def _cosmetics_apply(articles):
+    """Filter the catalogue from the persistent f_* state + inline search."""
     df = articles
+    tag, cat = _fget("f_tag"), _fget("f_category")
     if tag == "Women":
         df = df[df["index_group_name"].isin(["Women", "Unisex"])]
     elif tag == "Men":
         df = df[df["index_group_name"].isin(["Men", "Unisex"])]
     elif tag == "Kids":
         df = df[df["index_group_name"] == "Kids"]
-    if category != "All":
-        df = df[df["category"] == category]
-    if types:
-        df = df[df["product_type_name"].isin(types)]
-    if brands:
-        df = df[df["brand"].isin(brands)]
-    if qualities:
-        df = df[df["quality"].isin(qualities)]
-    if sizes:
-        df = df[df["size"].astype(str).isin(sizes)]
-    if made_ins:
-        df = df[df["made_in"].isin(made_ins)]
-    if shades:
-        df = df[df["colour_group_name"].isin(shades)]
-    if query.strip():
-        q = query.strip().lower()
+    if cat != "All":
+        df = df[df["category"] == cat]
+    for key, col in [("f_brand", "brand"), ("f_type", "product_type_name"),
+                     ("f_quality", "quality"), ("f_made", "made_in"),
+                     ("f_shade", "colour_group_name"), ("f_size", "size")]:
+        vals = _fget(key)
+        if vals:
+            df = df[df[col].astype(str).isin([str(v) for v in vals])]
+    q = st.session_state.get("cat_search", "").strip().lower()
+    if q:
         df = df[df["prod_name"].fillna("").str.lower().str.contains(q, regex=False)
                 | df["detail_desc"].fillna("").str.lower().str.contains(q, regex=False)
                 | df["brand"].fillna("").str.lower().str.contains(q, regex=False)]
-    df = df[df["article_id"].astype(str).map(eff).between(price_range[0], price_range[1])]
+    price = _fget("f_price")
+    if price is not None:
+        eff = {a: shared.effective_price(a) for a in df["article_id"].astype(str)}
+        df = df[df["article_id"].astype(str).map(eff).between(price[0], price[1])]
+    return df
 
-    sig = (query.strip().lower(), tag, category, tuple(types), tuple(brands),
-           tuple(qualities), tuple(sizes), tuple(made_ins), tuple(shades), price_range)
-    return df, sig
+
+@st.dialog("Filters", width="large")
+def _cosmetics_filter_dialog(articles, lo, hi):
+    """All facet filters in one modal (#10). Widgets use w_* keys seeded from the
+    persistent f_* state; Apply commits w_* → f_*."""
+    # seed widget state from the committed filters (only when absent)
+    seeds = {"w_tag": _fget("f_tag"), "w_category": _fget("f_category"),
+             "w_brand": _fget("f_brand"), "w_type": _fget("f_type"),
+             "w_quality": _fget("f_quality"), "w_size": _fget("f_size"),
+             "w_made": _fget("f_made"), "w_shade": _fget("f_shade"),
+             "w_price": _fget("f_price") or (lo, hi)}
+    for k, v in seeds.items():
+        st.session_state.setdefault(k, v)
+
+    st.markdown('<div class="field-label">Shop for</div>', unsafe_allow_html=True)
+    st.radio("Shop for", TAGS, horizontal=True, label_visibility="collapsed", key="w_tag")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown('<div class="field-label">Category</div>', unsafe_allow_html=True)
+        st.selectbox("Category", ["All", *_opts(articles["category"])],
+                     label_visibility="collapsed", key="w_category")
+    with c2:
+        _multiselect("Brand", articles["brand"], "w_brand")
+
+    cat = st.session_state.get("w_category", "All")
+    scope = articles if cat == "All" else articles[articles["category"] == cat]
+    f1, f2, f3 = st.columns(3)
+    with f1:
+        _multiselect("Type", scope["product_type_name"], "w_type")
+    with f2:
+        _multiselect("Quality", articles["quality"], "w_quality")
+    with f3:
+        _multiselect("Size", articles["size"], "w_size")
+    g1, g2 = st.columns(2)
+    with g1:
+        _multiselect("Made in", articles["made_in"], "w_made")
+    with g2:
+        _multiselect("Shade", articles["colour_group_name"], "w_shade")
+
+    st.markdown('<div class="field-label">Price ($)</div>', unsafe_allow_html=True)
+    st.slider("Price", min_value=lo, max_value=hi, step=1.0,
+              label_visibility="collapsed", key="w_price")
+
+    st.markdown('<div class="divider" style="margin:1rem 0 !important;"></div>', unsafe_allow_html=True)
+    b1, b2, b3 = st.columns(3)
+    if b1.button("Clear all", use_container_width=True, key="flt_clear"):
+        for k, v in FILTER_DEFAULTS.items():
+            st.session_state[k] = v
+        for wk in list(seeds):
+            st.session_state.pop(wk, None)
+        st.session_state["cat_page"] = 1
+        st.rerun()
+    if b2.button("Close", use_container_width=True, key="flt_close"):
+        for wk in list(seeds):
+            st.session_state.pop(wk, None)  # discard un-applied edits
+        st.rerun()
+    if b3.button("Apply filter", type="primary", use_container_width=True, key="flt_apply"):
+        st.session_state["f_tag"] = st.session_state["w_tag"]
+        st.session_state["f_category"] = st.session_state["w_category"]
+        st.session_state["f_brand"] = st.session_state["w_brand"]
+        st.session_state["f_type"] = st.session_state["w_type"]
+        st.session_state["f_quality"] = st.session_state["w_quality"]
+        st.session_state["f_size"] = st.session_state["w_size"]
+        st.session_state["f_made"] = st.session_state["w_made"]
+        st.session_state["f_shade"] = st.session_state["w_shade"]
+        price = st.session_state["w_price"]
+        st.session_state["f_price"] = None if tuple(price) == (lo, hi) else tuple(price)
+        st.session_state["cat_page"] = 1
+        st.rerun()
 
 
 # ---------------------------------------------------------------- H&M (legacy)
@@ -157,6 +214,7 @@ def main():
 
     shared.apply_css()
     shared.render_sidebar(user)
+    shared.scroll_to_top_if_flagged()
 
     cosmetics = shared.cosmetics_mode()
     articles = shared.load_articles()
@@ -173,12 +231,36 @@ def main():
 
     st.markdown('<div class="pill">Catalogue</div>', unsafe_allow_html=True)
     st.markdown("<h1>Browse the catalogue.</h1>", unsafe_allow_html=True)
-    sub = ("Filter by category, brand, quality, size, made-in, shade and price — "
-           "and shop for women, men or kids." if cosmetics
+    sub = ("Search, or open Filters for category, brand, quality, size, made-in, shade, "
+           "price and audience." if cosmetics
            else "Search by name, filter by department / type / colour / price.")
     st.markdown(f'<p class="subtitle">{len(articles)} products. {sub}</p>', unsafe_allow_html=True)
 
-    filtered, sig = (_cosmetics_filter_ui(articles) if cosmetics else _hm_filter_ui(articles))
+    if cosmetics:
+        lo, hi = _price_bounds(articles)
+        # inline search + a single Filters button that opens the modal (#10)
+        s1, s2 = st.columns([4, 1])
+        with s1:
+            st.text_input("Search", placeholder="Search — e.g. serum, lipstick, perfume",
+                          label_visibility="collapsed", key="cat_search")
+        with s2:
+            n = _active_count()
+            if st.button(f"⚙  Filters ({n})" if n else "⚙  Filters",
+                         use_container_width=True, key="open_filters"):
+                _cosmetics_filter_dialog(articles, lo, hi)
+        if _active_count() or st.session_state.get("cat_search", "").strip():
+            if st.button("✕  Clear filters", key="clear_inline"):
+                for k, v in FILTER_DEFAULTS.items():
+                    st.session_state[k] = v
+                st.session_state["cat_search"] = ""
+                st.session_state["cat_page"] = 1
+                st.rerun()
+        filtered = _cosmetics_apply(articles)
+        sig = (_fget("f_tag"), _fget("f_category"), tuple(_fget("f_brand")), tuple(_fget("f_type")),
+               tuple(_fget("f_quality")), tuple(_fget("f_size")), tuple(_fget("f_made")),
+               tuple(_fget("f_shade")), _fget("f_price"), st.session_state.get("cat_search", ""))
+    else:
+        filtered, sig = _hm_filter_ui(articles)
 
     if st.session_state.get("cat_filter_signature") != sig:
         st.session_state["cat_filter_signature"] = sig

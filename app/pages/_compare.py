@@ -47,18 +47,26 @@ def main():
     by_id = articles.set_index("article_id")
     ids = [a for a in ids if a in by_id.index]
 
-    head = st.columns([1.2] + [2] * len(ids))
-    head[0].markdown(f'<p class="muted" style="padding-top:60px;">'
-                     f'{len(ids)} of {shared.COMPARE_MAX}</p>', unsafe_allow_html=True)
+    st.markdown(f'<p class="muted">{len(ids)} of {shared.COMPARE_MAX} items · scroll down for the full spec comparison.</p>',
+                unsafe_allow_html=True)
+    # Big product images filled horizontally across the page, centred (#11). A
+    # narrow leading gutter keeps them aligned with the spec value columns below.
+    gutter = 0.5
+    head = st.columns([gutter] + [2] * len(ids), gap="large")
     for i, aid in enumerate(ids):
         item = by_id.loc[aid]
         with head[i + 1]:
             st.markdown(
                 f'<img src="{shared._resolve_image_src(aid, item.to_dict())}" '
-                f'style="width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:12px;">',
+                f'style="width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:16px;'
+                f'box-shadow:var(--shadow-2);">',
                 unsafe_allow_html=True,
             )
-            st.markdown(f"**{item.get('prod_name') or aid}**")
+            st.markdown(
+                f"<p style='text-align:center;font-weight:600;font-size:16px;margin:12px 0 8px;'>"
+                f"{item.get('prod_name') or aid}</p>",
+                unsafe_allow_html=True,
+            )
             if st.button("✕ Remove", key=f"cmp_rm_{aid}", use_container_width=True):
                 shared.toggle_compare(aid)
                 st.rerun()
@@ -81,16 +89,16 @@ def main():
 
     for label, _col in ATTRS:
         st.markdown('<div style="border-top:1px solid var(--border);"></div>', unsafe_allow_html=True)
-        row = st.columns([1.2] + [2] * len(ids))
-        row[0].markdown(f'<p style="color:var(--muted);font-weight:600;padding:10px 0;">{label}</p>',
+        row = st.columns([0.5] + [2] * len(ids), gap="large")
+        row[0].markdown(f'<p style="color:var(--muted);font-weight:600;font-size:12px;padding:10px 0;">{label}</p>',
                         unsafe_allow_html=True)
         for i, aid in enumerate(ids):
-            row[i + 1].markdown(f'<p style="padding:10px 0;font-size:14px;">{_value(label, aid)}</p>',
+            row[i + 1].markdown(f'<p style="padding:10px 0;font-size:14px;text-align:center;">{_value(label, aid)}</p>',
                                 unsafe_allow_html=True)
 
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
     if st.button("Clear comparison", key="cmp_clear"):
-        st.session_state["compare_ids"] = []
+        shared.clear_compare()
         st.rerun()
 
 

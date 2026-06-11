@@ -47,13 +47,16 @@ def main():
     shared.apply_css()
     shared.render_sidebar(user)
 
-    article_id = st.session_state.get("viewing_article_id")
+    # Cards link to /product?aid=... (#3); fall back to the session value.
+    article_id = st.query_params.get("aid") or st.session_state.get("viewing_article_id")
+    if article_id:
+        st.session_state["viewing_article_id"] = article_id
 
     if not article_id:
         st.markdown('<div class="pill">Product</div>', unsafe_allow_html=True)
         st.markdown("<h1>No product selected.</h1>", unsafe_allow_html=True)
         st.markdown(
-            '<p class="subtitle">Open the catalogue and click <b>View</b> on any item to see its full '
+            '<p class="subtitle">Open the catalogue and click any product to see its full '
             'details and similar items.</p>',
             unsafe_allow_html=True,
         )
@@ -95,18 +98,33 @@ def main():
     # Prefetch the hero image and similar-items images server-side. Similar
     # items are computed below but we can warm the cache while the user reads.
     shared.prefetch_images_sync([item_dict])
-    img_src = shared._resolve_image_src(article_id, item_dict, width=600, height=750)
+    gallery = shared.cosmetics_gallery(article_id, item_dict) if cosmetics \
+        else [shared._resolve_image_src(article_id, item_dict, width=600, height=750)]
+    try:
+        sel = int(st.query_params.get("gimg", 0))
+    except (TypeError, ValueError):
+        sel = 0
+    sel = max(0, min(sel, len(gallery) - 1))
     col_image, col_details = st.columns([1, 1], gap="large")
 
     with col_image:
         st.markdown(
             f'<div class="card" style="padding:0;">'
-            f'  <div class="card-image-wrapper" style="aspect-ratio: 4/5;">'
-            f'    <img class="card-image" src="{img_src}" alt="product image" />'
+            f'  <div class="card-image-wrapper" style="aspect-ratio: 1/1;">'
+            f'    <img class="card-image" src="{gallery[sel]}" alt="product image" />'
             f'  </div>'
             f'</div>',
             unsafe_allow_html=True,
         )
+        # thumbnail strip (#8) — each links back to this page with ?gimg=N
+        if len(gallery) > 1:
+            thumbs = "".join(
+                f'<a class="pthumb{" active" if i == sel else ""}" '
+                f'href="product?aid={article_id}&gimg={i}" target="_self">'
+                f'<img src="{src}" alt="view {i + 1}" /></a>'
+                for i, src in enumerate(gallery)
+            )
+            st.markdown(f'<div class="pthumbs">{thumbs}</div>', unsafe_allow_html=True)
 
     with col_details:
         st.markdown('<div class="pill">Product detail</div>', unsafe_allow_html=True)
@@ -127,8 +145,24 @@ def main():
                           f"${reg:,.2f}</s> <span style='color:var(--accent-2);'>${sale:,.2f}</span>")
         else:
             price_html = f"${reg:,.2f}"
-        st.markdown(f"<h2 style='margin:4px 0 12px 0 !important;'>{price_html}</h2>",
+        st.markdown(f"<h2 style='margin:4px 0 8px 0 !important;'>{price_html}</h2>",
                     unsafe_allow_html=True)
+
+        # ---------- one line: short description + rating (#7) ----------
+        _sum0 = db.review_summary(article_id)
+        _desc0 = _format_value(item.get("detail_desc"))
+        _short = ""
+        if _desc0 and _desc0 != "—":
+            _short = (_desc0[:108].rsplit(" ", 1)[0] + "…") if len(_desc0) > 108 else _desc0
+        _rating0 = ""
+        if _sum0["count"]:
+            _f = int(round(_sum0["avg"]))
+            _rating0 = (f'<span style="color:var(--accent);">{"★" * _f}{"☆" * (5 - _f)}</span> '
+                        f'<span class="muted">{_sum0["avg"]} ({_sum0["count"]})</span>')
+        if _short or _rating0:
+            sep = ' &nbsp;<span style="color:var(--border-2);">·</span>&nbsp; ' if (_short and _rating0) else ""
+            st.markdown(f'<p class="desc-rating">{_short}{sep}{_rating0}</p>', unsafe_allow_html=True)
+
         # compare toggle (public — guests can compare too)
         _in_cmp = shared.in_compare(article_id)
         if st.button("⚖  In compare" if _in_cmp else "⚖  Add to compare",
@@ -167,18 +201,6 @@ def main():
                     db.log_interaction(user["id"], article_id, "save")
                     st.rerun()
             st.caption(f"{len(saved)} item{'s' if len(saved) != 1 else ''} in your wishlist")
-
-        # ---------- review summary chip (full reviews section is below) ----------
-        _sum = db.review_summary(article_id)
-        if _sum["count"]:
-            full = int(round(_sum["avg"]))
-            st.markdown(
-                f'<p style="margin-top:14px;"><span style="color:var(--accent);font-size:16px;">'
-                f'{"★" * full}{"☆" * (5 - full)}</span> '
-                f'<span class="muted">{_sum["avg"]} · {_sum["count"]} review'
-                f'{"s" if _sum["count"] != 1 else ""}</span></p>',
-                unsafe_allow_html=True,
-            )
 
         # Spec table
         st.markdown("<h2 style='font-size: 18px;'>Details</h2>", unsafe_allow_html=True)

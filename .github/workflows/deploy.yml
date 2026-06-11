@@ -38,6 +38,8 @@ jobs:
             .venv/bin/python -c "from app import db; db.init_db()"
             echo "==> Seeding demo accounts"
             .venv/bin/python -m app.auth seed-demos || true
+            echo "==> Seeding product reviews"
+            .venv/bin/python scripts/seed_reviews.py || true
             echo "==> Restarting Streamlit"
             systemctl restart streamlit
             echo "==> Waiting for app to respond (models take time to load)"

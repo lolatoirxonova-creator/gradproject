@@ -1,61 +1,118 @@
-"""Seed demo product reviews so each cosmetics product shows real ratings/comments.
+"""Seed realistic product reviews so each cosmetics product shows ratings/comments.
 
-Adds 1–4 reviews per product from the existing demo/persona accounts, with varied
-ratings (weighted positive) and canned beauty-appropriate comments. Idempotent —
-one review per user per product (upsert).
+Creates a pool of reviewer persona accounts, then adds 4–8 reviews per product
+with category-aware comments, positively-weighted ratings, and varied dates
+(spread over the last few months). Idempotent — one review per user per product.
 
 Run:  python scripts/seed_reviews.py
 """
 from __future__ import annotations
-import random, sys
+import random
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 import pandas as pd
-from app import db
+from app import auth, db
 
 random.seed(7)
 
-COMMENTS = [
-    "Absolutely love this — works exactly as described.",
-    "Great quality for the price, will repurchase.",
-    "A little pricey, but worth every penny.",
-    "Gentle and effective. My new favourite.",
-    "The texture and scent are lovely.",
-    "Good product, takes a couple of weeks to see results.",
-    "Holy-grail status. Highly recommend.",
-    "Decent, nothing groundbreaking but does the job.",
-    "Perfect for everyday use — skin feels amazing.",
-    "Packaging is beautiful and it actually works.",
-    "Didn't quite work for my skin, but quality is clear.",
-    "Subtle, elegant, and long-lasting.",
-    "", "",  # some reviews are rating-only
+# Reviewer personas (realistic names for the target market).
+REVIEWERS = [
+    "Dilnoza R.", "Aziza K.", "Madina T.", "Sevara N.", "Kamola B.", "Nigora S.",
+    "Malika A.", "Zarina U.", "Gulnora M.", "Feruza H.", "Shahnoza Y.", "Oydin K.",
+    "Laylo R.", "Nodira T.", "Dildora S.", "Munisa A.", "Sabina V.", "Rayhona Q.",
 ]
+
+GENERIC = [
+    "Absolutely love this — works exactly as described.",
+    "Great quality for the price, will definitely repurchase.",
+    "A little pricey, but worth every penny.",
+    "Holy-grail status now. Highly recommend.",
+    "Beautiful packaging and it actually delivers.",
+    "Subtle, elegant and long-lasting.",
+    "Arrived quickly and exactly as pictured.",
+    "Decent — nothing groundbreaking, but does the job well.",
+    "", "",  # some are rating-only
+]
+BY_CATEGORY = {
+    "Skincare": [
+        "My skin feels so much softer after two weeks.",
+        "Hydrating without feeling greasy — perfect for my dry skin.",
+        "Cleared up my breakouts faster than I expected.",
+        "Gentle enough for sensitive skin, no irritation at all.",
+        "A little goes a long way; the bottle lasts ages.",
+        "Brightened my complexion noticeably. Glowy without the shine.",
+    ],
+    "Makeup": [
+        "The shade range is gorgeous and the pigment is rich.",
+        "Stayed put all day through a long shift — no touch-ups.",
+        "Blends like a dream, looks natural not cakey.",
+        "Pigmented and buildable. A tiny bit goes far.",
+        "Lovely satin finish, didn't settle into fine lines.",
+    ],
+    "Fragrance": [
+        "Compliments every time I wear it — lasts all day.",
+        "Warm and elegant, not overpowering. My signature now.",
+        "The dry-down is beautiful, lingers softly into the evening.",
+        "Bought it as a gift and they adored it.",
+        "Long-lasting and the bottle is stunning on the vanity.",
+    ],
+    "Hair & body": [
+        "Left my hair so soft and smooth, less frizz too.",
+        "Smells incredible and lathers beautifully.",
+        "Light, non-greasy and absorbs fast. Lovely scent.",
+        "Tamed my frizz without weighing my hair down.",
+    ],
+}
+
+
+def _ensure_reviewers() -> list[int]:
+    ids = []
+    for i, name in enumerate(REVIEWERS):
+        email = f"reviewer{i + 1}@barakaly.example"
+        try:
+            u = auth.register(email, "Review2026!", name, role="customer")
+            ids.append(u["id"])
+        except auth.AuthError:
+            existing = auth.authenticate(email, "Review2026!")
+            ids.append(existing["id"])
+    return ids
 
 
 def main():
     db.init_db()
-    with db.get_conn() as c:
-        users = c.execute("SELECT id, display_name FROM users WHERE role != 'admin'").fetchall()
-    user_ids = [u["id"] for u in users]
-    if not user_ids:
-        print("no users to review with"); return
+    reviewer_ids = _ensure_reviewers()
 
     csv = ROOT / "app/assets/cosmetics_products.csv"
     if not csv.exists():
-        print("no cosmetics catalogue"); return
-    aids = pd.read_csv(csv, dtype={"article_id": str})["article_id"].tolist()
+        print("no cosmetics catalogue")
+        return
+    df = pd.read_csv(csv, dtype={"article_id": str})
 
     n = 0
-    for aid in aids:
-        reviewers = random.sample(user_ids, k=min(len(user_ids), random.randint(1, 4)))
-        for uid in reviewers:
-            rating = random.choices([3, 4, 5], weights=[1, 3, 4])[0]
-            db.add_review(uid, aid, rating, random.choice(COMMENTS))
-            n += 1
-    print(f"seeded {n} reviews across {len(aids)} products "
-          f"(avg {n / max(1, len(aids)):.1f}/product)")
+    with db.get_conn() as c:
+        for _, row in df.iterrows():
+            aid = str(row["article_id"])
+            category = str(row.get("category") or "")
+            bank = BY_CATEGORY.get(category, []) + GENERIC
+            k = random.randint(4, 8)
+            for uid in random.sample(reviewer_ids, k=min(k, len(reviewer_ids))):
+                rating = random.choices([2, 3, 4, 5], weights=[1, 2, 5, 9])[0]
+                comment = random.choice(bank)
+                days_ago = random.randint(1, 130)
+                c.execute(
+                    "INSERT INTO reviews(user_id, article_id, rating, comment, created_at) "
+                    "VALUES (?, ?, ?, ?, datetime('now', ?)) "
+                    "ON CONFLICT(user_id, article_id) DO UPDATE SET "
+                    "rating = excluded.rating, comment = excluded.comment, created_at = excluded.created_at",
+                    (uid, aid, rating, comment, f"-{days_ago} days"),
+                )
+                n += 1
+        c.commit()
+    print(f"seeded {n} reviews across {len(df)} products "
+          f"(avg {n / max(1, len(df)):.1f}/product) from {len(reviewer_ids)} reviewers")
 
 
 if __name__ == "__main__":

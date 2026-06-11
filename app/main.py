@@ -20,7 +20,7 @@ import streamlit as st
 from app import auth, db, shared
 
 st.set_page_config(
-    page_title="Chiroyli",
+    page_title="Barakaly",
     page_icon="🛍️",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -34,6 +34,7 @@ def _on_login(email, password):
         user = auth.authenticate(email, password)
         st.session_state["user"] = user
         shared.establish_session(user)  # persist across refreshes
+        st.session_state["_scroll_top"] = True  # land at the top, not mid-list (#17)
         return None
     except auth.LockedError as e:
         return f"🔒 {e}"
@@ -54,6 +55,7 @@ def _on_signup(email, password, display_name, prefs):
         auth.set_preferences(user["id"], prefs)
         st.session_state["user"] = user
         shared.establish_session(user)  # persist across refreshes
+        st.session_state["_scroll_top"] = True  # land at the top, not mid-list (#17)
         return None
     except auth.AuthError as e:
         return str(e)
@@ -71,7 +73,7 @@ def render_auth_screen():
     # react to it — st.tabs switches client-side only and can't change the heading.
     is_signup = st.session_state.get("auth_mode", "Log in") == "Create account"
 
-    st.markdown('<div class="pill">✦  Chiroyli — beauty, curated</div>', unsafe_allow_html=True)
+    st.markdown('<div class="pill">✦  Barakaly — beauty, curated</div>', unsafe_allow_html=True)
     if is_signup:
         st.markdown("<h1 class='hero-headline'>Create your account.</h1>", unsafe_allow_html=True)
         st.markdown(
@@ -203,8 +205,9 @@ def _render_single_algo_home(algo, user, articles, tfidf, vectorizer,
 
 
 def _render_cosmetics_home(user):
-    """Cosmetics home: a content-based 'Recommended for you' rail (the trained
-    H&M models don't apply to generated cosmetics, so we use shared.recommend_cosmetics)."""
+    """Cosmetics home: carousel → 'Recommended for you' (first) → shop-by
+    shortcuts → on-sale rail. Recs use shared.recommend_cosmetics (the trained
+    H&M models don't apply to generated cosmetics)."""
     catalogue = shared.load_articles()  # cosmetics df in cosmetics mode
     guest = user is None
     if guest:
@@ -219,14 +222,28 @@ def _render_cosmetics_home(user):
         uid = user["id"]
 
     if guest:
-        st.markdown('<div class="pill">✦  Chiroyli — beauty, curated</div>', unsafe_allow_html=True)
+        st.markdown('<div class="pill">✦  Barakaly — beauty, curated</div>', unsafe_allow_html=True)
     else:
         st.markdown(f'<div class="pill">Welcome back, {user["display_name"]}</div>', unsafe_allow_html=True)
 
-    # ---------- carousel banner (#1) ----------
-    shared.render_carousel()
+    # ---------- carousel banner with product images (#1) ----------
+    shared.render_carousel(catalogue)
 
-    # ---------- on sale (#4) ----------
+    # ---------- recommended for you — FIRST section (#5) ----------
+    recs = shared.recommend_cosmetics(seed_ids=saved, prefs=prefs, k=9, exclude=excluded)
+    caption = ("Based on your saved items." if saved
+               else ("Sign in to tailor these to your taste." if guest
+                     else "Popular picks — save items to personalise this."))
+    shared.render_rail(
+        "Recommended for you", caption, recs, catalogue, key_prefix="cos_home",
+        user_id=uid, saved_set=saved_set, liked_set=liked, disliked_set=disliked,
+        cart_set=cart_set,
+    )
+
+    # ---------- shop-by category / occasion shortcuts (#6) ----------
+    _render_shortcuts()
+
+    # ---------- on sale ----------
     sale_df = catalogue[catalogue["sale_price"].notna()]
     sale_ids = [a for a in sale_df["article_id"].astype(str).tolist() if a not in excluded][:9]
     if sale_ids:
@@ -236,65 +253,45 @@ def _render_cosmetics_home(user):
             liked_set=liked, disliked_set=disliked, cart_set=cart_set,
         )
 
-    # ---------- recommended / featured (#5) ----------
-    recs = shared.recommend_cosmetics(seed_ids=saved, prefs=prefs, k=9, exclude=excluded)
-    if guest:
-        title, caption = "Featured", "Sign in to get picks tailored to you."
-    else:
-        title = "Recommended for you"
-        caption = ("Based on your saved items." if saved
-                   else "Popular picks — save items to personalise this.")
-    shared.render_rail(
-        title, caption, recs, catalogue, key_prefix="cos_home",
-        user_id=uid, saved_set=saved_set, liked_set=liked, disliked_set=disliked,
-        cart_set=cart_set,
-    )
 
-    # ---------- AI shopping assistant (#10) ----------
-    _render_assistant(catalogue, uid, saved_set, liked, disliked, cart_set)
+# Home shop-by shortcuts → jump to the catalogue pre-filtered (#6).
+_SHORTCUTS = [
+    ("🎁  Gifts for her", {"f_tag": "Women", "f_quality": ["Luxury", "Premium"]}),
+    ("🎁  Gifts for him", {"f_tag": "Men"}),
+    ("✨  Skincare", {"f_category": "Skincare"}),
+    ("🌸  Fragrance", {"f_category": "Fragrance"}),
+]
+# All catalogue filter keys (persistent f_* + modal w_* + bookkeeping) — cleared
+# before applying a shortcut so the preset starts from a clean slate.
+_CAT_FILTER_KEYS = ("f_tag", "f_category", "f_brand", "f_type", "f_quality",
+                    "f_size", "f_made", "f_shade", "f_price", "cat_search",
+                    "cat_page", "cat_filter_signature",
+                    "w_tag", "w_category", "w_brand", "w_type", "w_quality",
+                    "w_size", "w_made", "w_shade", "w_price")
 
 
-def _render_assistant(catalogue, uid, saved_set, liked, disliked, cart_set):
-    """Rule-based beauty assistant — free-text + quick chips, returns product picks."""
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-    st.markdown('<div class="pill">✦  Ask Chiroyli</div>', unsafe_allow_html=True)
-    st.markdown('<p class="subtitle">Your beauty assistant.</p>', unsafe_allow_html=True)
-    st.markdown('<p class="muted">Try “a hydrating serum for dry skin under $30”, '
-                "“a luxury gift for her”, or “something on sale”.</p>", unsafe_allow_html=True)
+def _apply_shortcut(preset: dict):
+    for k in _CAT_FILTER_KEYS:
+        st.session_state.pop(k, None)
+    st.session_state.update(preset)
+    st.session_state["cat_page"] = 1
+    st.session_state["_scroll_top"] = True
+    st.switch_page("pages/1_Catalogue.py")
 
-    history = st.session_state.setdefault("assistant_history", [])
 
-    # quick-start chips
-    chip_cols = st.columns(len(shared._ASSIST_QUICK))
-    for col, chip in zip(chip_cols, shared._ASSIST_QUICK):
-        if col.button(chip, key=f"asst_chip_{chip}", use_container_width=True):
-            st.session_state["assistant_pending"] = chip
-            st.rerun()
-
-    # replay the conversation
-    for turn in history:
-        with st.chat_message(turn["role"], avatar=("💄" if turn["role"] == "assistant" else "🧑")):
-            st.markdown(turn["text"])
-            if turn.get("ids"):
-                shared.render_rec_cards(
-                    turn["ids"], catalogue, key_prefix=f"asst_t{turn['n']}",
-                    user_id=uid, saved_set=saved_set, liked_set=liked,
-                    disliked_set=disliked, cart_set=cart_set,
-                )
-
-    typed = st.chat_input("Ask for a product…")
-    prompt = typed or st.session_state.pop("assistant_pending", None)
-    if prompt:
-        reply, ids = shared.cosmetics_assistant_reply(prompt, catalogue)
-        n = len([t for t in history if t["role"] == "assistant"])
-        history.append({"role": "user", "text": prompt, "n": n})
-        history.append({"role": "assistant", "text": reply, "ids": ids, "n": n})
-        st.rerun()
+def _render_shortcuts():
+    st.markdown("<h2>Shop by</h2>", unsafe_allow_html=True)
+    st.markdown('<p class="muted">Jump straight to a curated edit.</p>', unsafe_allow_html=True)
+    cols = st.columns(len(_SHORTCUTS))
+    for col, (label, preset) in zip(cols, _SHORTCUTS):
+        if col.button(label, key=f"sc_{label}", use_container_width=True):
+            _apply_shortcut(preset)
 
 
 def render_home(user):
     shared.apply_css()
     shared.render_sidebar(user)
+    shared.scroll_to_top_if_flagged()
 
     if shared.cosmetics_mode():
         _render_cosmetics_home(user)
@@ -644,11 +641,12 @@ def main():
                         icon=":material/bar_chart:", url_path="analytics"),
             ]
         # Hidden pages — reached via buttons / switch_page; nav links hidden in CSS
-        # (a[href$="/product|/checkout|/success"]).
+        # (a[href$="/product|/checkout|/success|/orders"]).
         pages += [
             st.Page("pages/_product.py", title="Product", url_path="product"),
             st.Page("pages/_checkout.py", title="Checkout", url_path="checkout"),
             st.Page("pages/_success.py", title="Order confirmed", url_path="success"),
+            st.Page("pages/_orders.py", title="Payment history", url_path="orders"),
         ]
 
     st.navigation(pages, position="sidebar").run()
