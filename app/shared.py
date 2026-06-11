@@ -612,8 +612,16 @@ CUSTOM_CSS = """
   [data-testid="stMainMenu"], [data-testid="stMainMenuButton"],
   [data-testid="stToolbarActions"], [data-testid="stAppDeployButton"],
   [data-testid="stHeaderActionElements"] { display: none !important; }
-  header[data-testid="stHeader"] { background: transparent !important; box-shadow: none !important; }
-  [data-testid="stExpandSidebarButton"] { display: flex !important; z-index: 1003 !important; }
+  /* The header/toolbar is transparent AND click-through (pointer-events:none) so
+     it can't steal clicks from the top-right account menu / Sign-in button that
+     sit beneath it; only the sidebar reopen control stays interactive. */
+  header[data-testid="stHeader"], [data-testid="stToolbar"] {
+    background: transparent !important; box-shadow: none !important; pointer-events: none !important;
+  }
+  [data-testid="stExpandSidebarButton"],
+  [data-testid="stExpandSidebarButton"] button {
+    display: flex !important; z-index: 1003 !important; pointer-events: auto !important;
+  }
   .block-container,
   [data-testid="stMainBlockContainer"] {
     max-width: 1600px;
