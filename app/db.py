@@ -111,6 +111,30 @@ CREATE TABLE IF NOT EXISTS order_items (
     unit_price REAL    NOT NULL,
     FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
 );
+
+-- Product reviews: one per user per article (rating + optional comment).
+CREATE TABLE IF NOT EXISTS reviews (
+    user_id    INTEGER NOT NULL,
+    article_id TEXT    NOT NULL,
+    rating     INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+    comment    TEXT,
+    created_at TEXT    NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (user_id, article_id),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_reviews_article ON reviews(article_id, created_at DESC);
+
+-- In-app notifications (e.g. offline 'order now' confirmations).
+CREATE TABLE IF NOT EXISTS notifications (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL,
+    message    TEXT    NOT NULL,
+    kind       TEXT    NOT NULL DEFAULT 'info',
+    read       INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT    NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, created_at DESC);
 """
 
 # Round-robin order — also the canonical algorithm keys used across the app.
@@ -437,6 +461,114 @@ def get_order(order_id: int) -> dict | None:
     d = dict(o)
     d["items"] = [dict(r) for r in items]
     return d
+
+
+# ---------- product reviews ----------
+
+def add_review(user_id: int, article_id: str, rating: int, comment: str = "") -> None:
+    """Upsert a user's review (one per user per article)."""
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO reviews(user_id, article_id, rating, comment) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(user_id, article_id) DO UPDATE SET "
+            "rating = excluded.rating, comment = excluded.comment, created_at = datetime('now')",
+            (user_id, str(article_id), int(rating), (comment or "").strip()),
+        )
+        conn.commit()
+
+
+def get_reviews(article_id: str, limit: int = 30) -> list[dict]:
+    """Reviews for an article, newest first: [{display_name, rating, comment, created_at}]."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT u.display_name, r.rating, r.comment, r.created_at "
+            "FROM reviews r JOIN users u ON u.id = r.user_id "
+            "WHERE r.article_id = ? ORDER BY r.created_at DESC, u.display_name LIMIT ?",
+            (str(article_id), limit),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def review_summary(article_id: str) -> dict:
+    """{avg, count} for an article's reviews (avg=0.0, count=0 if none)."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n, COALESCE(AVG(rating), 0) AS avg FROM reviews WHERE article_id = ?",
+            (str(article_id),),
+        ).fetchone()
+    return {"count": int(row["n"]), "avg": round(float(row["avg"]), 1)}
+
+
+# ---------- notifications ----------
+
+def add_notification(user_id: int, message: str, kind: str = "info") -> None:
+    with get_conn() as conn:
+        conn.execute("INSERT INTO notifications(user_id, message, kind) VALUES (?, ?, ?)",
+                     (user_id, message, kind))
+        conn.commit()
+
+
+def get_notifications(user_id: int, limit: int = 20) -> list[dict]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT id, message, kind, read, created_at FROM notifications "
+            "WHERE user_id = ? ORDER BY created_at DESC, id DESC LIMIT ?",
+            (user_id, limit),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def unread_notifications(user_id: int) -> int:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM notifications WHERE user_id = ? AND read = 0", (user_id,)
+        ).fetchone()
+    return int(row["n"])
+
+
+def mark_notifications_read(user_id: int) -> None:
+    with get_conn() as conn:
+        conn.execute("UPDATE notifications SET read = 1 WHERE user_id = ? AND read = 0", (user_id,))
+        conn.commit()
+
+
+def order_now(user_id: int, article_id: str, quantity: int, unit_price: float,
+              product_name: str = "") -> int:
+    """Place an OFFLINE 'order now' for a single item — reserves it for in-store
+    pickup (no online payment), logs a purchase, and posts a notification.
+    Does not touch the cart. Returns the order id."""
+    with get_conn() as conn:
+        cur = conn.execute(
+            "INSERT INTO orders(user_id, total, n_items, status) VALUES (?, ?, ?, 'offline')",
+            (user_id, float(unit_price) * int(quantity), int(quantity)),
+        )
+        order_id = cur.lastrowid
+        conn.execute(
+            "INSERT INTO order_items(order_id, article_id, quantity, unit_price) VALUES (?, ?, ?, ?)",
+            (order_id, str(article_id), int(quantity), float(unit_price)),
+        )
+        conn.execute(
+            "INSERT INTO interactions(user_id, article_id, event_type) VALUES (?, ?, 'purchase')",
+            (user_id, str(article_id)),
+        )
+        name = (product_name + " ") if product_name else ""
+        conn.execute(
+            "INSERT INTO notifications(user_id, message, kind) VALUES (?, ?, 'order')",
+            (user_id,
+             f"The {name}product you chose has been ordered! You can come to our market "
+             f"and collect it, paying offline. Order #{order_id}."),
+        )
+        conn.commit()
+    return int(order_id)
+
+
+def user_review(user_id: int, article_id: str) -> dict | None:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT rating, comment FROM reviews WHERE user_id = ? AND article_id = ?",
+            (user_id, str(article_id)),
+        ).fetchone()
+    return dict(row) if row else None
 
 
 def record_login_attempt(email: str, success: bool,

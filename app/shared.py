@@ -75,6 +75,28 @@ def _login_art_data_uri() -> str:
     return ""
 
 
+def render_carousel() -> None:
+    """3-slide cross-fading promo banner for the home page (CSS-only)."""
+    slides = [
+        ("New season", "Skincare that loves you back",
+         "Serums, moisturisers &amp; masks — curated for your routine.",
+         "linear-gradient(120deg,#caa24a 0%,#8a6d22 100%)"),
+        ("This week · up to 35% off", "Fragrance, on sale",
+         "Signature scents at their best price — while stocks last.",
+         "linear-gradient(120deg,#b8893a 0%,#6f5418 100%)"),
+        ("Chiroyli", "Beauty, curated for you",
+         "Skincare · Makeup · Fragrance · Hair &amp; body, picked for your taste.",
+         "linear-gradient(120deg,#c19a3e 0%,#9a7a2c 100%)"),
+    ]
+    inner = "".join(
+        f'<div class="slide" style="background:{grad};">'
+        f'<span class="tag">{tag}</span><h2>{title}</h2><p>{sub}</p></div>'
+        for tag, title, sub, grad in slides
+    )
+    st.markdown(f'<div class="carousel">{inner}<div class="dots"><i></i><i></i><i></i></div></div>',
+                unsafe_allow_html=True)
+
+
 def render_auth_panel() -> None:
     """Split-screen auth: editorial form hard-left, minimalist art panel hard-right.
     Only injected while logged out, so this CSS is scoped to the auth page.
@@ -628,6 +650,35 @@ CUSTOM_CSS = """
     font-family: ui-monospace, SFMono-Regular, monospace;
     margin: 6px 0 0;
   }
+  .card-price { font-size: 14px; font-weight: 700; color: var(--ink); margin: 5px 0 0; }
+  .card-price s { color: var(--muted); font-weight: 400; font-size: 12px; margin-right: 6px; }
+  .card-price .sale { color: var(--accent-2); }
+
+  /* ===== Home carousel banner (3 cross-fading slides, CSS-only) ===== */
+  .carousel {
+    position: relative; height: 240px; border-radius: 22px; overflow: hidden;
+    margin: 4px 0 28px; box-shadow: var(--shadow-2);
+  }
+  .carousel .slide {
+    position: absolute; inset: 0; opacity: 0; animation: carofade 18s infinite;
+    display: flex; flex-direction: column; justify-content: center;
+    padding: 0 56px; color: #fff;
+  }
+  .carousel .slide:nth-child(1) { animation-delay: 0s; }
+  .carousel .slide:nth-child(2) { animation-delay: 6s; }
+  .carousel .slide:nth-child(3) { animation-delay: 12s; }
+  .carousel .slide h2 { font-family: var(--display); font-size: 34px; margin: 0 !important; color: #fff; }
+  .carousel .slide p  { font-size: 16px; margin: 8px 0 0; color: rgba(255,255,255,0.92); max-width: 460px; }
+  .carousel .slide .tag {
+    display: inline-block; width: fit-content; font-size: 12px; font-weight: 600;
+    letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 12px;
+    background: rgba(255,255,255,0.22); padding: 4px 12px; border-radius: 100px;
+  }
+  @keyframes carofade {
+    0% { opacity: 0; } 4% { opacity: 1; } 30% { opacity: 1; } 36% { opacity: 0; } 100% { opacity: 0; }
+  }
+  .carousel .dots { position: absolute; bottom: 14px; right: 22px; display: flex; gap: 7px; }
+  .carousel .dots i { width: 7px; height: 7px; border-radius: 50%; background: rgba(255,255,255,0.55); display: block; }
 
   /* History row (saved-items panel) */
   .history-row {
@@ -1622,6 +1673,14 @@ def render_account_menu(user: dict) -> None:
     email = user.get("email", "")
     role = user.get("role", "customer")
     initials = _initials(name)
+    unread = db.unread_notifications(user["id"])
+    if unread:  # red badge on the avatar when there are unread notifications
+        st.markdown(
+            "<style>.st-key-account_menu button{position:relative;}"
+            ".st-key-account_menu button::after{content:'';position:absolute;top:1px;right:1px;"
+            "width:12px;height:12px;border-radius:50%;background:#e8462a;border:2px solid #fff;}</style>",
+            unsafe_allow_html=True,
+        )
     with st.popover(initials, use_container_width=False, key="account_menu"):
         role_chip = (f'<span class="acct-role">{html.escape(role.capitalize())}</span>'
                      if role in ("admin", "analyst") else "")
@@ -1634,6 +1693,26 @@ def render_account_menu(user: dict) -> None:
             '</div>',
             unsafe_allow_html=True,
         )
+
+        # ---------- notifications ----------
+        notes = db.get_notifications(user["id"], limit=8)
+        if notes:
+            hdr = f"Notifications · {unread} new" if unread else "Notifications"
+            st.markdown(f'<p style="font-weight:600;margin:6px 0 4px;">{html.escape(hdr)}</p>',
+                        unsafe_allow_html=True)
+            for nt in notes:
+                bg = "var(--accent-soft)" if not nt["read"] else "transparent"
+                st.markdown(
+                    f'<div style="background:{bg};border:1px solid var(--border);border-radius:10px;'
+                    f'padding:8px 10px;margin-bottom:6px;font-size:12.5px;line-height:1.45;">'
+                    f'{html.escape(nt["message"])}'
+                    f'<div class="muted" style="font-size:11px;margin-top:3px;">{(nt["created_at"] or "")[:16]}</div>'
+                    f'</div>', unsafe_allow_html=True)
+            if unread and st.button("Mark all read", use_container_width=True, key="acct_mark_read"):
+                db.mark_notifications_read(user["id"])
+                st.rerun()
+            st.markdown('<div class="divider" style="margin:6px 0 !important;"></div>', unsafe_allow_html=True)
+
         if st.button("Log out", use_container_width=True, key="acct_logout"):
             clear_session()  # revoke server-side session + clear the browser cookie
             for k in list(st.session_state.keys()):
@@ -1648,6 +1727,9 @@ def render_sidebar(user: dict) -> None:
     Page links (Home/Catalogue/Analytics/Admin/…) are owned by st.navigation;
     identity + logout live in the top-right account menu (render_account_menu).
     """
+    if user is None:
+        return  # guest: no account menu / docs — the nav's "Sign in" handles auth
+
     render_account_menu(user)  # rendered in main area, pinned top-right via CSS
 
     # Docs + recommender display options are a research-role affordance (analyst).
@@ -1805,6 +1887,15 @@ def _card_html(item: dict, rank: int | None = None,
     meta_parts = [m for m in meta_parts if m]
     meta = '<span class="dot">·</span>'.join(meta_parts) if meta_parts else "—"
     section = item.get("section_name") or ""
+    # Price line (cosmetics): regular, or struck-through original + gold sale price.
+    price_html = ""
+    if cosmetics_mode():
+        reg, sale = catalogue_price(aid)
+        if sale is not None:
+            price_html = (f'<p class="card-price"><s>${reg:,.2f}</s>'
+                          f'<span class="sale">${sale:,.2f}</span></p>')
+        elif reg:
+            price_html = f'<p class="card-price">${reg:,.2f}</p>'
     reason_html = (
         f'<p class="card-reason"><span class="why-icon">✨</span>{reason}</p>'
         if reason else ""
@@ -1823,6 +1914,7 @@ def _card_html(item: dict, rank: int | None = None,
         '  <div class="card-body">'
         f'    <p class="card-title">{name}</p>'
         f'    <p class="card-meta">{meta}{" · " + section if section else ""}</p>'
+        f'    {price_html}'
         f'    {reason_html}'
         f'    {id_html}'
         '  </div>'

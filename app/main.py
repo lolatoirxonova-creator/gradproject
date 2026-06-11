@@ -206,24 +206,47 @@ def _render_cosmetics_home(user):
     """Cosmetics home: a content-based 'Recommended for you' rail (the trained
     H&M models don't apply to generated cosmetics, so we use shared.recommend_cosmetics)."""
     catalogue = shared.load_articles()  # cosmetics df in cosmetics mode
-    state = db.user_state(user["id"])
-    saved, liked, disliked = state["saved"], state["liked"], state["disliked"]
-    saved_set = set(saved)
-    excluded = saved_set | disliked
-    prefs = auth.get_preferences(user["id"])
-    cart_set = {l["article_id"] for l in db.get_cart(user["id"])}
+    guest = user is None
+    if guest:
+        saved, liked, disliked, saved_set, excluded, prefs, cart_set, uid = [], set(), set(), set(), set(), [], set(), None
+    else:
+        state = db.user_state(user["id"])
+        saved, liked, disliked = state["saved"], state["liked"], state["disliked"]
+        saved_set = set(saved)
+        excluded = saved_set | disliked
+        prefs = auth.get_preferences(user["id"])
+        cart_set = {l["article_id"] for l in db.get_cart(user["id"])}
+        uid = user["id"]
 
-    st.markdown(f'<div class="pill">Welcome back, {user["display_name"]}</div>', unsafe_allow_html=True)
-    st.markdown("<h1>Recommended for you.</h1>", unsafe_allow_html=True)
-    st.markdown('<p class="subtitle">Cosmetics picked for you — skincare, makeup, fragrance and '
-                'hair &amp; body, tuned to your saved items and preferences.</p>', unsafe_allow_html=True)
+    if guest:
+        st.markdown('<div class="pill">✦  Chiroyli — beauty, curated</div>', unsafe_allow_html=True)
+    else:
+        st.markdown(f'<div class="pill">Welcome back, {user["display_name"]}</div>', unsafe_allow_html=True)
 
-    recs = shared.recommend_cosmetics(seed_ids=saved, prefs=prefs, k=12, exclude=excluded)
-    caption = ("Based on your saved items." if saved
-               else "Popular picks — save items to personalise this.")
+    # ---------- carousel banner (#1) ----------
+    shared.render_carousel()
+
+    # ---------- on sale (#4) ----------
+    sale_df = catalogue[catalogue["sale_price"].notna()]
+    sale_ids = [a for a in sale_df["article_id"].astype(str).tolist() if a not in excluded][:9]
+    if sale_ids:
+        shared.render_rail(
+            "On sale", "Limited-time prices — grab them while they last.", sale_ids, catalogue,
+            key_prefix="cos_sale", user_id=uid, saved_set=saved_set,
+            liked_set=liked, disliked_set=disliked, cart_set=cart_set,
+        )
+
+    # ---------- recommended / featured (#5) ----------
+    recs = shared.recommend_cosmetics(seed_ids=saved, prefs=prefs, k=9, exclude=excluded)
+    if guest:
+        title, caption = "Featured", "Sign in to get picks tailored to you."
+    else:
+        title = "Recommended for you"
+        caption = ("Based on your saved items." if saved
+                   else "Popular picks — save items to personalise this.")
     shared.render_rail(
-        "Picked for you", caption, recs, catalogue, key_prefix="cos_home",
-        user_id=user["id"], saved_set=saved_set, liked_set=liked, disliked_set=disliked,
+        title, caption, recs, catalogue, key_prefix="cos_home",
+        user_id=uid, saved_set=saved_set, liked_set=liked, disliked_set=disliked,
         cart_set=cart_set,
     )
 
@@ -504,8 +527,8 @@ def render_home(user):
 
 
 def _home_page():
-    """Logged-in home, wrapped as an st.navigation page target."""
-    render_home(st.session_state["user"])
+    """Home — works for both logged-in users and guests (user may be None)."""
+    render_home(st.session_state.get("user"))
 
 
 def main():
@@ -515,15 +538,24 @@ def main():
     shared.check_session_timeout()
     user = st.session_state.get("user")
 
-    if user is None:
-        # Auth screen only — no sidebar, no page menu, no flash.
-        st.navigation(
-            [st.Page(render_auth_screen, title="Sign in", url_path="signin")],
-            position="hidden",
-        ).run()
-        return
-
     shared.render_brand()  # project logo, top-left above the sidebar nav
+
+    if user is None:
+        # Public browsing (#2): guests can view Home + Catalogue + product detail;
+        # ordering / saving requires sign-in. The Sign-in page object is stashed so
+        # action buttons can st.switch_page() to it.
+        signin = st.Page(render_auth_screen, title="Sign in",
+                         icon=":material/login:", url_path="signin")
+        st.session_state["_signin_page"] = signin
+        st.navigation([
+            st.Page(_home_page, title="Home", icon=":material/home:",
+                    url_path="home", default=True),
+            st.Page("pages/1_Catalogue.py", title="Catalogue",
+                    icon=":material/storefront:", url_path="catalogue"),
+            st.Page("pages/_product.py", title="Product", url_path="product"),
+            signin,
+        ], position="sidebar").run()
+        return
 
     role = user.get("role")
     if role == "admin":
