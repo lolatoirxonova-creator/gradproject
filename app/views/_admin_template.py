@@ -198,7 +198,11 @@ _TEMPLATE = r"""<!DOCTYPE html>
 
   .main{flex:1; display:flex; flex-direction:column; min-width:0;}
   .ticker-wrap{background:var(--surface-2); border-bottom:1px solid var(--border);
-    overflow:hidden; white-space:nowrap; padding:9px 0;}
+    overflow:hidden; white-space:nowrap; padding:9px 0; position:relative;}
+  /* fade the scrolling text out on the right so it never collides with the
+     floating account avatar that sits over the top-right corner */
+  .ticker-wrap::after{content:''; position:absolute; top:0; right:0; height:100%; width:96px;
+    background:linear-gradient(90deg, rgba(250,246,236,0), var(--surface-2) 62%); pointer-events:none;}
   .ticker{display:inline-flex; gap:34px; animation:scroll 40s linear infinite;
     font-size:12px; color:var(--text-muted); padding-left:34px; font-variant-numeric:tabular-nums;}
   .ticker strong{color:var(--accent-dim);}

@@ -187,15 +187,18 @@ def main():
     # zero the padding so the console fills the viewport, and drop the gold account
     # avatar below the scrolling ticker so the two don't overlap.
     st.markdown(
-        "<style>[data-testid='stSidebar'],[data-testid='stSidebarCollapsedControl'],"
+        "<style>"
+        "[data-testid='stSidebar'],[data-testid='stSidebarCollapsedControl'],"
         "[data-testid='stHeader'],[data-testid='stLogo'],[data-testid='stLogoLink']"
         "{display:none!important;}"
-        "[data-testid='stAppViewContainer']>.main,[data-testid='stAppViewContainer']"
-        "{padding-top:0!important;}"
-        "[data-testid='stMainBlockContainer']{padding:0!important;max-width:100%!important;"
-        "min-height:0!important;}"
-        "[data-testid='stMainBlockContainer']::after{display:none!important;}"
-        ".st-key-account_menu{top:46px!important;right:30px!important;z-index:100001!important;}</style>",
+        "[data-testid='stAppViewContainer'],[data-testid='stMain']{padding-top:0!important;}"
+        ".block-container,[data-testid='stMainBlockContainer']"
+        "{padding:0!important;max-width:100%!important;min-height:0!important;}"
+        ".block-container::after,[data-testid='stMainBlockContainer']::after{display:none!important;}"
+        "[data-testid='stMain'] [data-testid='stVerticalBlock']{gap:0!important;}"
+        "[data-testid='stElementContainer'],.stCustomComponentV1,"
+        "[data-testid='stIFrame']{margin:0!important;}"
+        ".st-key-account_menu{top:8px!important;right:26px!important;z-index:100001!important;}</style>",
         unsafe_allow_html=True,
     )
     shared.render_account_menu(user)
