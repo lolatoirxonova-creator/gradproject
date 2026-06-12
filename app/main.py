@@ -575,6 +575,7 @@ def main():
     db.init_db()
     shared.mount_cookie_controller()   # mount once per run so set/remove work
     shared.restore_session()           # rehydrate user from cookie (no flash)
+    shared.ensure_session_cookie()     # self-heal the cookie if a login set was lost
     shared.check_session_timeout()
     user = st.session_state.get("user")
 

@@ -274,27 +274,69 @@ def restore_session() -> dict | None:
     user = db.get_session_user(token)
     if user is not None:
         st.session_state["user"] = user
+        st.session_state["_session_token"] = token  # remember for cookie self-heal
     return user
 
 
-def establish_session(user: dict) -> None:
-    """Persist a login: create a server-side session and set the browser cookie."""
-    token = auth.new_session_token()
-    db.create_session(token, user["id"], ttl_days=auth.SESSION_TTL_DAYS)
+def _write_session_cookie(token: str) -> None:
+    """Write the session cookie two ways for reliability:
+    1) streamlit-cookies-controller (its set() can be lost if st.rerun() fires
+       before the component flushes);
+    2) a synchronous JS write to the PARENT document — guaranteed to land on a
+       full render, which is what makes persistent login survive refreshes."""
+    max_age = auth.SESSION_TTL_DAYS * 24 * 3600
     try:
         _cookie_controller().set(
             auth.SESSION_COOKIE_NAME, token,
-            max_age=auth.SESSION_TTL_DAYS * 24 * 3600, same_site="lax", path="/",
+            max_age=max_age, same_site="lax", path="/",
         )
     except Exception:
-        # Cookie write failed (e.g. component not yet mounted) — login still
-        # works for this session; persistence resumes on the next successful set.
         pass
+    try:
+        import streamlit.components.v1 as components
+        cookie = f"{auth.SESSION_COOKIE_NAME}={token}; path=/; max-age={max_age}; SameSite=Lax"
+        components.html(
+            f"<script>try{{window.parent.document.cookie={cookie!r};}}"
+            f"catch(e){{document.cookie={cookie!r};}}</script>",
+            height=0,
+        )
+    except Exception:
+        pass
+
+
+def establish_session(user: dict) -> None:
+    """Persist a login: create a server-side session and (try to) set the cookie.
+    The reliable write happens on the next full render via ensure_session_cookie."""
+    token = auth.new_session_token()
+    db.create_session(token, user["id"], ttl_days=auth.SESSION_TTL_DAYS)
+    st.session_state["_session_token"] = token
+    _write_session_cookie(token)
+
+
+def ensure_session_cookie() -> None:
+    """Self-heal persistent login: if the user is logged in but the browser cookie
+    wasn't written yet (the login-time set is lost when st.rerun() interrupts the
+    cookie component — which logged users out on the next refresh), write it once
+    per session on a normal render so it actually persists."""
+    if st.session_state.get("user") is None:
+        return
+    token = st.session_state.get("_session_token")
+    if not token or st.session_state.get("_cookie_written") == token:
+        return
+    try:
+        current = st.context.cookies.get(auth.SESSION_COOKIE_NAME)
+    except Exception:
+        current = None
+    if current != token:
+        _write_session_cookie(token)
+    st.session_state["_cookie_written"] = token
 
 
 def clear_session() -> None:
     """Log out: revoke the server-side session and remove the browser cookie."""
     st.session_state.pop("auth_view", None)  # so logout returns to public browsing, not the auth screen
+    st.session_state.pop("_session_token", None)
+    st.session_state.pop("_cookie_written", None)
     try:
         token = st.context.cookies.get(auth.SESSION_COOKIE_NAME)
     except Exception:
@@ -1010,10 +1052,14 @@ CUSTOM_CSS = """
     border: none !important; box-shadow: none !important; margin: 0 !important;
     border-radius: 0 !important;
   }
-  /* transparent full-card overlay link (behind the action row) */
+  /* transparent full-card overlay link (behind the action row). Must be forced
+     to FULL width/height — without use_container_width the element container
+     shrinks to the button text (~136px) and only covers part of the card. */
   div[class*="st-key-cl_"] {
-    position: absolute !important; inset: 0 !important; z-index: 1 !important;
-    margin: 0 !important; padding: 0 !important; height: 100% !important;
+    position: absolute !important;
+    top: 0 !important; left: 0 !important; right: 0 !important; bottom: 0 !important;
+    width: 100% !important; height: 100% !important;
+    z-index: 1 !important; margin: 0 !important; padding: 0 !important;
   }
   div[class*="st-key-cl_"] .stButton,
   div[class*="st-key-cl_"] .stButton > button { height: 100% !important; width: 100% !important; }
