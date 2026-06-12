@@ -125,6 +125,7 @@ def render(d: dict, user: dict, _html, json) -> str:
         "__FUNNEL_ROWS__": funnel_rows,
         "__LOG_ROWS__": log_rows,
         "__LOG_COUNT__": f"{d['total_events']:,}",
+        "__LOG_EXPORT__": json.dumps(d.get("export_logs", []), ensure_ascii=False),
         # ---- chart data (JSON) ----
         "__REV_LABELS__": json.dumps(d["rev_labels"]),
         "__REV_DATA__": json.dumps([round(x * shared.UZS_PER_USD) for x in d["rev_data"]]),
@@ -258,6 +259,11 @@ _TEMPLATE = r"""<!DOCTYPE html>
     color:var(--text); border-radius:10px; padding:9px 13px; font-size:13px; font-family:'Inter', sans-serif;}
   .logs-toolbar input{flex:1; min-width:180px;}
   .logs-toolbar input::placeholder{color:var(--text-dim);}
+  .dl-btn{display:inline-flex; align-items:center; gap:6px; background:var(--accent); color:#fff;
+    border:none; border-radius:10px; padding:9px 16px; font-size:13px; font-weight:600; cursor:pointer;
+    font-family:'Inter', sans-serif; white-space:nowrap;}
+  .dl-btn:hover{background:var(--accent-dim);}
+  .dl-btn i{font-size:16px;}
   table.logs{width:100%; border-collapse:collapse; font-size:13px;}
   table.logs th{text-align:left; padding:10px 14px; font-size:11px; text-transform:uppercase;
     letter-spacing:0.06em; color:var(--text-dim); font-weight:600; border-bottom:1px solid var(--border);}
@@ -434,6 +440,7 @@ _TEMPLATE = r"""<!DOCTYPE html>
           <option value="danger">Failed</option>
           <option value="warning">Pay at store</option>
         </select>
+        <button id="logDownload" class="dl-btn" type="button"><i class="ti ti-download"></i> Download CSV</button>
       </div>
       <table class="logs">
         <thead><tr><th>Time</th><th>User</th><th>Action</th><th>Details</th><th>IP address</th><th>Status</th></tr></thead>
@@ -497,6 +504,25 @@ _TEMPLATE = r"""<!DOCTYPE html>
   if(_q){ _q.addEventListener('input', filterLogs);
           _fa.addEventListener('change', filterLogs);
           _fs.addEventListener('change', filterLogs); }
+
+  // Download the full activity log as CSV. The anchor is created in the parent
+  // document (not the sandboxed component iframe) so the download isn't blocked.
+  const LOG_EXPORT = __LOG_EXPORT__;
+  const _dl = document.getElementById('logDownload');
+  function downloadCsv(){
+    const head = ['Time','User','Action','Details','IP address','Status'];
+    const cell = (s) => '"' + String(s == null ? '' : s).replace(/"/g, '""') + '"';
+    const csv = [head].concat(LOG_EXPORT).map(r => r.map(cell).join(',')).join('\r\n');
+    const blob = new Blob(['﻿' + csv], {type: 'text/csv;charset=utf-8;'});
+    const url = URL.createObjectURL(blob);
+    let doc = document;
+    try { if(window.parent && window.parent.document) doc = window.parent.document; } catch(e){}
+    const a = doc.createElement('a');
+    a.href = url; a.download = 'barakaly-activity-logs.csv';
+    doc.body.appendChild(a); a.click();
+    setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 1500);
+  }
+  if(_dl) _dl.addEventListener('click', downloadCsv);
 
   window.addEventListener('resize', fit);
   window.addEventListener('load', () => setTimeout(fit, 200));

@@ -86,10 +86,10 @@ def _gather() -> dict:
 
         order_logs = c.execute(
             "SELECT o.created_at, u.email, o.id, o.total, o.n_items, o.status "
-            "FROM orders o JOIN users u ON u.id=o.user_id ORDER BY o.created_at DESC, o.id DESC LIMIT 10"
+            "FROM orders o JOIN users u ON u.id=o.user_id ORDER BY o.created_at DESC, o.id DESC LIMIT 3000"
         ).fetchall()
         login_logs = c.execute(
-            "SELECT created_at, email, success, ip FROM login_attempts ORDER BY id DESC LIMIT 10"
+            "SELECT created_at, email, success, ip FROM login_attempts ORDER BY id DESC LIMIT 3000"
         ).fetchall()
         total_events = int(one("SELECT COUNT(*) FROM "
                                "(SELECT id FROM orders UNION ALL SELECT id FROM login_attempts)"))
@@ -154,7 +154,9 @@ def _gather() -> dict:
                      r["ip"] or "—", "Success" if ok else "Failed",
                      "success" if ok else "danger"))
     logs.sort(key=lambda x: x[0] or "", reverse=True)
-    logs = logs[:12]
+    display_logs = logs[:12]
+    # Full export (time, user, action, details, ip, status) — drops the badge class.
+    export_logs = [[(r[0] or ""), r[1], r[2], r[3], r[4], r[5]] for r in logs[:5000]]
 
     return dict(
         gmv=gmv, n_orders=n_orders, buyers=buyers, admins=admins, aov=aov,
@@ -166,7 +168,7 @@ def _gather() -> dict:
         repeat_rate=repeat_rate, clv=clv, cart_abandon=cart_abandon,
         reviews=reviews, avg_rating=avg_rating, new_30=new_30,
         funnel=funnel, gmv_today=gmv_today, orders_today=orders_today,
-        logs=logs, total_events=total_events,
+        logs=display_logs, export_logs=export_logs, total_events=total_events,
     )
 
 
