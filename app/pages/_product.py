@@ -94,37 +94,18 @@ def main():
     # Prefetch the hero image and similar-items images server-side. Similar
     # items are computed below but we can warm the cache while the user reads.
     shared.prefetch_images_sync([item_dict])
-    if cosmetics:
-        gallery = shared.cosmetics_gallery(article_id, item_dict)
-    else:
-        gallery = [{"src": shared._resolve_image_src(article_id, item_dict, width=600, height=750),
-                    "style": "object-position:center;"}]
-    try:
-        sel = int(st.query_params.get("gimg", 0))
-    except (TypeError, ValueError):
-        sel = 0
-    sel = max(0, min(sel, len(gallery) - 1))
+    img_src = shared._resolve_image_src(article_id, item_dict, width=640, height=640)
     col_image, col_details = st.columns([1, 1], gap="large")
 
     with col_image:
         st.markdown(
             f'<div class="card" style="padding:0;">'
             f'  <div class="card-image-wrapper" style="aspect-ratio: 1/1;">'
-            f'    <img class="card-image" src="{gallery[sel]["src"]}" '
-            f'style="{gallery[sel]["style"]}" alt="product image" />'
+            f'    <img class="card-image" src="{img_src}" alt="product image" />'
             f'  </div>'
             f'</div>',
             unsafe_allow_html=True,
         )
-        # thumbnail strip (#4/#8) — framings of the same product; link via ?gimg=N
-        if len(gallery) > 1:
-            thumbs = "".join(
-                f'<a class="pthumb{" active" if i == sel else ""}" '
-                f'href="product?aid={article_id}&gimg={i}" target="_self">'
-                f'<img src="{g["src"]}" style="{g["style"]}" alt="view {i + 1}" /></a>'
-                for i, g in enumerate(gallery)
-            )
-            st.markdown(f'<div class="pthumbs">{thumbs}</div>', unsafe_allow_html=True)
 
     with col_details:
         st.markdown('<div class="pill">Product detail</div>', unsafe_allow_html=True)
