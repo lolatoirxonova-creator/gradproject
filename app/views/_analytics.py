@@ -200,7 +200,10 @@ def main():
         "[data-testid='stMain'] [data-testid='stVerticalBlock']{gap:0!important;}"
         "[data-testid='stElementContainer'],.stCustomComponentV1,"
         "[data-testid='stIFrame']{margin:0!important;}"
-        ".st-key-account_menu{top:42px!important;right:26px!important;z-index:100001!important;}</style>",
+        ".block-container,[data-testid='stMainBlockContainer']{position:relative!important;}"
+        # absolute (not fixed) → the avatar scrolls away with the page instead of staying sticky
+        ".st-key-account_menu{position:absolute!important;top:46px!important;right:26px!important;"
+        "z-index:100001!important;}</style>",
         unsafe_allow_html=True,
     )
     shared.render_account_menu(user)
