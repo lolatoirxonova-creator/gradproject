@@ -199,11 +199,6 @@ def main():
             f"<h1 style='margin-top: 0;'>{_format_value(item.get('prod_name'))}</h1>",
             unsafe_allow_html=True,
         )
-        st.markdown(
-            f'<p class="muted">{_format_value(item.get("product_type_name"))} · '
-            f'{_format_value(item.get("colour_group_name"))} · ID {article_id}</p>',
-            unsafe_allow_html=True,
-        )
 
         # ---------- price + quantity + add to cart + order now ----------
         reg, sale = shared.catalogue_price(article_id)
