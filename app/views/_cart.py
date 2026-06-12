@@ -35,7 +35,7 @@ def main():
         st.markdown('<p class="subtitle">Your cart is empty. Add items from the catalogue '
                     'or a product page to get started.</p>', unsafe_allow_html=True)
         if st.button("Browse catalogue", type="primary"):
-            st.switch_page("pages/1_Catalogue.py")
+            st.switch_page("views/1_Catalogue.py")
         return
 
     articles = shared.load_articles()
@@ -107,7 +107,7 @@ def main():
         st.markdown('<p class="muted">Shipping & taxes calculated at checkout.</p>',
                     unsafe_allow_html=True)
         if st.button("Proceed to checkout →", type="primary", use_container_width=True):
-            st.switch_page("pages/_checkout.py")
+            st.switch_page("views/_checkout.py")
 
 
 main()

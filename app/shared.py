@@ -2224,7 +2224,7 @@ def _account_dialog(user: dict) -> None:
     if role in ("customer", "analyst"):
         if st.button("Payment history", use_container_width=True, key="acct_orders",
                      icon=":material/receipt_long:"):
-            st.switch_page("pages/_orders.py")
+            st.switch_page("views/_orders.py")
 
     if st.button("Log out", use_container_width=True, key="acct_logout"):
         clear_session()  # revoke server-side session + clear the browser cookie
@@ -2235,7 +2235,7 @@ def _account_dialog(user: dict) -> None:
         if role in ("admin", "seller"):
             st.rerun()                                  # guest fallback renders Catalogue
         else:
-            st.switch_page("pages/1_Catalogue.py")      # clean guest landing (#15)
+            st.switch_page("views/1_Catalogue.py")      # clean guest landing (#15)
 
 
 def render_account_menu(user: dict) -> None:
@@ -2533,7 +2533,7 @@ def render_rec_cards(rec_ids, articles: pd.DataFrame, key_prefix: str = "rec",
                     if st.button("View product", key=f"cl_{key_prefix}_{aid}"):  # transparent overlay (#3)
                         st.session_state["viewing_article_id"] = aid
                         st.session_state["_scroll_top"] = True
-                        st.switch_page("pages/_product.py")
+                        st.switch_page("views/_product.py")
                     _render_actions(
                         d["article_id"], key_prefix,
                         user_id=user_id, saved_set=saved_set,
@@ -2556,7 +2556,7 @@ def render_catalogue_card(item: dict, key_prefix: str,
         if st.button("View product", key=f"cl_{key_prefix}_{aid}"):  # transparent overlay (#3)
             st.session_state["viewing_article_id"] = aid
             st.session_state["_scroll_top"] = True
-            st.switch_page("pages/_product.py")
+            st.switch_page("views/_product.py")
         _render_actions(
             aid, key_prefix,
             user_id=user_id, saved_set=saved_set,

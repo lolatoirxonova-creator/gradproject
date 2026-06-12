@@ -58,7 +58,7 @@ def main():
         st.markdown('<div class="pill">Checkout</div>', unsafe_allow_html=True)
         st.markdown("<h1>Your cart is empty.</h1>", unsafe_allow_html=True)
         if st.button("Browse catalogue", type="primary"):
-            st.switch_page("pages/1_Catalogue.py")
+            st.switch_page("views/1_Catalogue.py")
         return
 
     articles = shared.load_articles()
@@ -136,7 +136,7 @@ def main():
                 st.session_state.pop("checkout_errors", None)
                 order_id = db.create_order(user["id"], items)
                 st.session_state["last_order_id"] = order_id
-                st.switch_page("pages/_success.py")
+                st.switch_page("views/_success.py")
 
     with right:
         st.markdown("**Order summary**")
@@ -157,7 +157,7 @@ def main():
         st.markdown(f"<h2 style='margin-top:6px !important;'>Total ${total:,.2f}</h2>",
                     unsafe_allow_html=True)
         if st.button("← Back to cart", use_container_width=True):
-            st.switch_page("pages/_cart.py")
+            st.switch_page("views/_cart.py")
 
 
 main()

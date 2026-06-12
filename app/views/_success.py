@@ -30,7 +30,7 @@ def main():
         st.markdown('<div class="pill">Order</div>', unsafe_allow_html=True)
         st.markdown("<h1>No recent order.</h1>", unsafe_allow_html=True)
         if st.button("Browse catalogue", type="primary"):
-            st.switch_page("pages/1_Catalogue.py")
+            st.switch_page("views/1_Catalogue.py")
         return
 
     articles = shared.load_articles()
@@ -127,13 +127,13 @@ def main():
     b1, b2, b3 = st.columns(3)
     if b1.button("Continue shopping", type="primary", use_container_width=True):
         st.session_state.pop("last_order_id", None)
-        st.switch_page("pages/1_Catalogue.py")
+        st.switch_page("views/1_Catalogue.py")
     if b2.button("Payment history", use_container_width=True):
         st.session_state.pop("last_order_id", None)
-        st.switch_page("pages/_orders.py")
+        st.switch_page("views/_orders.py")
     if b3.button("View wishlist", use_container_width=True):
         st.session_state.pop("last_order_id", None)
-        st.switch_page("pages/2_Wishlist.py")
+        st.switch_page("views/2_Wishlist.py")
 
 
 main()

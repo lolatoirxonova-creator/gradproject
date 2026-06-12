@@ -49,7 +49,7 @@ def main():
         if st.button("Back to home", icon=":material/home:", key="orders_home",
                      use_container_width=True):
             _home = st.session_state.get("_home_page")
-            st.switch_page(_home) if _home is not None else st.switch_page("pages/1_Catalogue.py")
+            st.switch_page(_home) if _home is not None else st.switch_page("views/1_Catalogue.py")
 
     orders = db.user_orders(user["id"])
     if not orders:
@@ -57,7 +57,7 @@ def main():
             '<p class="subtitle">No orders yet. When you check out or place an in-store order, '
             'it will appear here.</p>', unsafe_allow_html=True)
         if st.button("Browse catalogue", type="primary"):
-            st.switch_page("pages/1_Catalogue.py")
+            st.switch_page("views/1_Catalogue.py")
         return
 
     total_spent = sum(o["total"] for o in orders)

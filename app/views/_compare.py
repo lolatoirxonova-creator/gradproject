@@ -40,7 +40,7 @@ def main():
                     'product (catalogue, home, or a product page) to add it here — up to '
                     f'{shared.COMPARE_MAX} items.</p>', unsafe_allow_html=True)
         if st.button("Browse catalogue", type="primary"):
-            st.switch_page("pages/1_Catalogue.py")
+            st.switch_page("views/1_Catalogue.py")
         return
 
     articles = shared.load_articles()

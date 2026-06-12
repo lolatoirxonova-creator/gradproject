@@ -136,7 +136,7 @@ def main():
             unsafe_allow_html=True,
         )
         if st.button("Go to catalogue", type="primary"):
-            st.switch_page("pages/1_Catalogue.py")
+            st.switch_page("views/1_Catalogue.py")
         return
 
     articles = shared.load_articles()
