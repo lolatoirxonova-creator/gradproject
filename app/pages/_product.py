@@ -35,6 +35,68 @@ def _go_signin():
     shared.go_signin()
 
 
+def _stars(n: float) -> str:
+    f = int(round(n or 0))
+    return "★" * f + "☆" * (5 - f)
+
+
+@st.dialog("Ratings & reviews", width="large")
+def _reviews_dialog(article_id: str, user):
+    """Detailed reviews popup — summary + write/edit form + every review."""
+    import html as _html
+    summary = db.review_summary(article_id)
+    if summary["count"]:
+        st.markdown(
+            f"<p style='font-size:16px;margin:0 0 4px;'>"
+            f"<span style='color:var(--accent);font-size:20px;'>{_stars(summary['avg'])}</span> "
+            f"<b>{summary['avg']}</b> <span class='muted'>· {summary['count']} "
+            f"review{'s' if summary['count'] != 1 else ''}</span></p>",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown("<p class='muted'>No reviews yet — be the first to share yours.</p>",
+                    unsafe_allow_html=True)
+
+    if user is None:
+        if st.button("Sign in to write a review", key="rev_signin_dlg"):
+            _go_signin()
+    else:
+        existing = db.user_review(user["id"], article_id)
+        with st.form(f"review_form_{article_id}"):
+            rv_rating = st.slider("Your rating", 1, 5,
+                                  value=(existing["rating"] if existing else 5),
+                                  key=f"rev_rating_{article_id}")
+            rv_comment = st.text_area("Your review (optional)",
+                                      value=(existing["comment"] if existing else ""),
+                                      placeholder="What did you think of this product?",
+                                      key=f"rev_comment_{article_id}")
+            if st.form_submit_button("Submit review", type="primary"):
+                db.add_review(user["id"], article_id, rv_rating, rv_comment)
+                db.log_rating(user["id"], article_id, rv_rating)  # recommender signal
+                st.toast("Thanks for your review!", icon=":material/check_circle:")
+                st.rerun()
+
+    st.markdown('<div class="divider" style="margin:1rem 0 !important;"></div>', unsafe_allow_html=True)
+    reviews = db.get_reviews(article_id)
+    if not reviews:
+        st.markdown("<p class='muted'>No reviews to show yet.</p>", unsafe_allow_html=True)
+    for rv in reviews:
+        name = _html.escape(rv["display_name"] or "Anonymous")
+        comment = _html.escape((rv["comment"] or "").strip())
+        date = (rv["created_at"] or "")[:10]
+        comment_html = (f'<p style="margin:6px 0 0;font-size:14px;line-height:1.5;">{comment}</p>'
+                        if comment else "")
+        st.markdown(
+            f'<div class="card" style="padding:14px 16px;margin-bottom:8px;">'
+            f'<div style="display:flex;justify-content:space-between;align-items:center;">'
+            f'<span style="font-weight:600;">{name}</span>'
+            f'<span style="color:var(--accent);">{_stars(rv["rating"])}</span></div>'
+            f'{comment_html}'
+            f'<p class="muted" style="margin:6px 0 0;font-size:12px;">{date}</p></div>',
+            unsafe_allow_html=True,
+        )
+
+
 def main():
     shared.check_session_timeout()
     user = st.session_state.get("user")  # may be None — product detail is public (#2)
@@ -106,6 +168,30 @@ def main():
             f'</div>',
             unsafe_allow_html=True,
         )
+
+        # ---------- ratings summary card (#11) — details open in a popup ----------
+        _rs = db.review_summary(article_id)
+        if _rs["count"]:
+            st.markdown(
+                f'<div class="card" style="padding:16px 18px;margin-top:12px;">'
+                f'<div style="display:flex;align-items:center;gap:16px;">'
+                f'<div style="font-family:var(--display);font-size:36px;font-weight:700;line-height:1;">{_rs["avg"]}</div>'
+                f'<div><div style="color:var(--accent);font-size:19px;letter-spacing:1px;">{_stars(_rs["avg"])}</div>'
+                f'<div class="muted" style="font-size:13px;margin-top:2px;">{_rs["count"]} '
+                f'review{"s" if _rs["count"] != 1 else ""}</div></div></div></div>',
+                unsafe_allow_html=True,
+            )
+            _rev_label = f"See all {_rs['count']} reviews"
+        else:
+            st.markdown(
+                '<div class="card" style="padding:16px 18px;margin-top:12px;">'
+                '<p class="muted" style="margin:0;">No reviews yet — be the first to share yours.</p></div>',
+                unsafe_allow_html=True,
+            )
+            _rev_label = "Write a review"
+        if st.button(_rev_label, icon=":material/reviews:", key="open_reviews",
+                     use_container_width=True):
+            _reviews_dialog(article_id, user)
 
     with col_details:
         st.markdown('<div class="pill">Product detail</div>', unsafe_allow_html=True)
@@ -223,65 +309,6 @@ def main():
         st.markdown("<h2>Description</h2>", unsafe_allow_html=True)
         st.markdown(
             f'<p style="color:#1d1d1f; max-width: 700px; line-height: 1.6; font-size: 15px;">{detail}</p>',
-            unsafe_allow_html=True,
-        )
-
-    # ---------- ratings & reviews (#11) ----------
-    import html as _html
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-    summary = db.review_summary(article_id)
-
-    def _stars(n: float) -> str:
-        f = int(round(n))
-        return "★" * f + "☆" * (5 - f)
-
-    if summary["count"]:
-        st.markdown(
-            f"<h2>Ratings &amp; reviews "
-            f"<span style='color:var(--accent);'>{_stars(summary['avg'])}</span> "
-            f"<span class='muted' style='font-size:15px;font-weight:400;'>{summary['avg']} · "
-            f"{summary['count']} review{'s' if summary['count'] != 1 else ''}</span></h2>",
-            unsafe_allow_html=True,
-        )
-    else:
-        st.markdown("<h2>Ratings &amp; reviews</h2>", unsafe_allow_html=True)
-        st.markdown("<p class='muted'>No reviews yet — be the first to share yours.</p>",
-                    unsafe_allow_html=True)
-
-    if guest:
-        if st.button("Sign in to write a review", key="rev_signin"):
-            _go_signin()
-    else:
-        existing = db.user_review(user["id"], article_id)
-        with st.expander("Edit your review" if existing else "Write a review",
-                         expanded=not summary["count"]):
-            with st.form(f"review_form_{article_id}"):
-                rv_rating = st.slider("Your rating", 1, 5,
-                                      value=(existing["rating"] if existing else 5),
-                                      key=f"rev_rating_{article_id}")
-                rv_comment = st.text_area("Your review (optional)",
-                                          value=(existing["comment"] if existing else ""),
-                                          placeholder="What did you think of this product?",
-                                          key=f"rev_comment_{article_id}")
-                if st.form_submit_button("Submit review", type="primary"):
-                    db.add_review(user["id"], article_id, rv_rating, rv_comment)
-                    db.log_rating(user["id"], article_id, rv_rating)  # recommender signal
-                    st.toast("Thanks for your review!", icon="✅")
-                    st.rerun()
-
-    for rv in db.get_reviews(article_id):
-        name = _html.escape(rv["display_name"] or "Anonymous")
-        comment = _html.escape((rv["comment"] or "").strip())
-        date = (rv["created_at"] or "")[:10]
-        comment_html = (f'<p style="margin:6px 0 0;font-size:14px;line-height:1.5;">{comment}</p>'
-                        if comment else "")
-        st.markdown(
-            f'<div class="card" style="padding:14px 16px;margin-bottom:8px;">'
-            f'<div style="display:flex;justify-content:space-between;align-items:center;">'
-            f'<span style="font-weight:600;">{name}</span>'
-            f'<span style="color:var(--accent);">{_stars(rv["rating"])}</span></div>'
-            f'{comment_html}'
-            f'<p class="muted" style="margin:6px 0 0;font-size:12px;">{date}</p></div>',
             unsafe_allow_html=True,
         )
 
