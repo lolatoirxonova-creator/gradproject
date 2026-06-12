@@ -699,6 +699,8 @@ CUSTOM_CSS = """
     min-height: 920px;
     position: relative; z-index: 1;   /* sit above the fixed grain overlay */
   }
+  /* guaranteed gap before the end of every page (#16) */
+  [data-testid="stMainBlockContainer"]::after { content: ""; display: block; height: 72px; }
   [data-testid="stSidebar"] { position: relative; z-index: 1; }
 
   /* Sidebar nav (st.navigation auto-menu) */
@@ -2236,11 +2238,19 @@ def render_account_menu(user: dict) -> None:
                 st.switch_page("pages/_orders.py")
 
         if st.button("Log out", use_container_width=True, key="acct_logout"):
+            _role = user.get("role", "customer")
             clear_session()  # revoke server-side session + clear the browser cookie
             for k in list(st.session_state.keys()):
                 if k not in ("mmr_enabled", "show_tech_details"):  # preserve display prefs
                     st.session_state.pop(k, None)
-            st.rerun()
+            st.session_state["_scroll_top"] = True
+            # Land on the Catalogue (a guest route). For customer/analyst it's in the
+            # current nav, so switch_page goes there cleanly with no "page not found"
+            # flash (#15). admin/seller navs lack it → fall back to a guest rerun.
+            if _role in ("admin", "seller"):
+                st.rerun()
+            else:
+                st.switch_page("pages/1_Catalogue.py")
 
 
 def render_sidebar(user: dict) -> None:

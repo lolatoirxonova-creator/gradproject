@@ -624,9 +624,11 @@ def main():
         n_cart = db.cart_count(user["id"])
         cart_title = f"Cart ({n_cart})" if n_cart else "Cart"
         cmp_n = len(shared.compare_ids())
+        _home = st.Page(_home_page, title="Home", icon=":material/home:",
+                        url_path="home", default=True)
+        st.session_state["_home_page"] = _home  # so hidden pages can route back home
         pages = [
-            st.Page(_home_page, title="Home", icon=":material/home:",
-                    url_path="home", default=True),
+            _home,
             st.Page("pages/1_Catalogue.py", title="Catalogue",
                     icon=":material/storefront:", url_path="catalogue"),
             st.Page("pages/_compare.py", title=f"Compare ({cmp_n})" if cmp_n else "Compare",

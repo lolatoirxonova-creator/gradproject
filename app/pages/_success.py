@@ -104,6 +104,22 @@ def main():
             f'<span>{name} × {qty}</span><span>${price * qty:,.2f}</span></div>',
             unsafe_allow_html=True,
         )
+    # estimated delivery — within 3 days from now (#13)
+    from datetime import datetime, timedelta
+    eta = (datetime.now() + timedelta(days=3)).strftime("%A, %-d %B %Y")
+    st.markdown(
+        f'<div class="card" style="padding:14px 18px;margin:14px 0;display:flex;'
+        f'align-items:center;gap:14px;">'
+        f'<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#C19A3E" '
+        f'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
+        f'<path d="M1 3h15v13H1z"/><path d="M16 8h4l3 3v5h-7z"/>'
+        f'<circle cx="5.5" cy="18.5" r="2"/><circle cx="18.5" cy="18.5" r="2"/></svg>'
+        f'<div><p style="margin:0;font-weight:600;">Estimated delivery — within 3 days</p>'
+        f'<p class="muted" style="margin:3px 0 0;font-size:13px;">Arriving by '
+        f'<b style="color:var(--ink);">{eta}</b> at your delivery address.</p></div></div>',
+        unsafe_allow_html=True,
+    )
+
     st.markdown('<div class="divider" style="margin:10px 0 !important;"></div>', unsafe_allow_html=True)
     st.markdown(f"<h2 style='margin-top:0 !important;'>Total paid: ${order['total']:,.2f}</h2>",
                 unsafe_allow_html=True)

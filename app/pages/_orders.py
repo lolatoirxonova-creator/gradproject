@@ -43,6 +43,14 @@ def main():
     st.markdown('<div class="pill">Your account</div>', unsafe_allow_html=True)
     st.markdown("<h1>Payment history.</h1>", unsafe_allow_html=True)
 
+    # back to home (#14)
+    _bh, _ = st.columns([1, 4])
+    with _bh:
+        if st.button("Back to home", icon=":material/home:", key="orders_home",
+                     use_container_width=True):
+            _home = st.session_state.get("_home_page")
+            st.switch_page(_home) if _home is not None else st.switch_page("pages/1_Catalogue.py")
+
     orders = db.user_orders(user["id"])
     if not orders:
         st.markdown(
