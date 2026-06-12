@@ -44,6 +44,24 @@ def _fget(key):
     return st.session_state.get(key, FILTER_DEFAULTS[key])
 
 
+# Modal widget keys, reset alongside the persistent f_* state.
+_W_KEYS = ("w_tag", "w_category", "w_brand", "w_type", "w_quality",
+           "w_size", "w_made", "w_shade", "w_price_min", "w_price_max")
+
+
+def _clear_all_filters():
+    """Reset every filter. Used as an on_click callback so it runs BEFORE the
+    widgets are instantiated this run — the only safe place to reset widget-keyed
+    state like `cat_search` (setting it after the widget renders raises
+    StreamlitAPIException)."""
+    for k, v in FILTER_DEFAULTS.items():
+        st.session_state[k] = v
+    st.session_state["cat_search"] = ""
+    st.session_state["cat_page"] = 1
+    for wk in _W_KEYS:
+        st.session_state.pop(wk, None)
+
+
 # ---------------------------------------------------------------- cosmetics
 def _price_bounds(articles):
     eff = [shared.effective_price(a) for a in articles["article_id"].astype(str)]
@@ -148,16 +166,10 @@ def _cosmetics_filter_dialog(articles, lo, hi):
 
     st.markdown('<div class="divider" style="margin:1rem 0 !important;"></div>', unsafe_allow_html=True)
     b1, b2, b3 = st.columns(3)
-    if b1.button("Clear all", use_container_width=True, key="flt_clear"):
-        for k, v in FILTER_DEFAULTS.items():
-            st.session_state[k] = v
-        for wk in list(seeds):
-            st.session_state.pop(wk, None)
-        st.session_state["cat_page"] = 1
-        st.rerun()
+    # Clear runs as a callback (before widgets re-instantiate) so resetting the
+    # w_* widget keys can't raise the "modified after instantiated" error.
+    b1.button("Clear all", use_container_width=True, key="flt_clear", on_click=_clear_all_filters)
     if b2.button("Close", use_container_width=True, key="flt_close"):
-        for wk in list(seeds):
-            st.session_state.pop(wk, None)  # discard un-applied edits
         st.rerun()
     if b3.button("Apply filter", type="primary", use_container_width=True, key="flt_apply"):
         st.session_state["f_tag"] = st.session_state["w_tag"]
@@ -260,12 +272,8 @@ def main():
                          use_container_width=True, key="open_filters"):
                 _cosmetics_filter_dialog(articles, lo, hi)
         if _active_count() or st.session_state.get("cat_search", "").strip():
-            if st.button("Clear filters", icon=":material/close:", key="clear_inline"):
-                for k, v in FILTER_DEFAULTS.items():
-                    st.session_state[k] = v
-                st.session_state["cat_search"] = ""
-                st.session_state["cat_page"] = 1
-                st.rerun()
+            st.button("Clear filters", icon=":material/close:", key="clear_inline",
+                      on_click=_clear_all_filters)
         filtered = _cosmetics_apply(articles)
         sig = (_fget("f_tag"), _fget("f_category"), tuple(_fget("f_brand")), tuple(_fget("f_type")),
                tuple(_fget("f_quality")), tuple(_fget("f_size")), tuple(_fget("f_made")),

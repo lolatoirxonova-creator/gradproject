@@ -91,7 +91,8 @@ def main():
             st.markdown(f"<div style='padding-top:6px;font-weight:600;'>${line_total:,.2f}</div>",
                         unsafe_allow_html=True)
         with c_rm:
-            if st.button("🗑", key=f"cart_rm_{aid}", use_container_width=True, help="Remove"):
+            if st.button("", icon=":material/delete:", key=f"cart_rm_{aid}",
+                         use_container_width=True, help="Remove"):
                 db.remove_from_cart(user["id"], aid)
                 st.rerun()
 

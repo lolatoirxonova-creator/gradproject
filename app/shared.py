@@ -660,6 +660,9 @@ CUSTOM_CSS = """
     -webkit-font-smoothing: antialiased;
     background: var(--bg-soft);
   }
+  /* never allow a horizontal scrollbar (a stray wide element shouldn't push the
+     whole layout sideways / look "collapsed") */
+  html, body, [data-testid="stMain"], [data-testid="stAppViewContainer"] { overflow-x: hidden !important; }
   /* Faint tiling gold sparkle motif on the warm cream — subtle beauty-brand
      texture (behind all content; only visible in whitespace). */
   [data-testid="stAppViewContainer"]::before {
@@ -1122,6 +1125,8 @@ CUSTOM_CSS = """
   [data-testid="stTextArea"] textarea::placeholder {
     color: var(--muted); opacity: 0.85;
   }
+  /* hide the "Press Enter to submit form" helper that overlaps the eye/step icons (#7) */
+  [data-testid="InputInstructions"], [data-testid="stWidgetInstructions"] { display: none !important; }
 
   /* ===== Home category shortcuts (#6) ===== */
   .shortcut-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 6px 0 4px; }
@@ -2188,6 +2193,11 @@ def render_account_menu(user: dict) -> None:
             unsafe_allow_html=True,
         )
     with st.popover(initials, use_container_width=False, key="account_menu"):
+        # Close the popover (#8) — any button click reruns and dismisses it.
+        _cl, _ = st.columns([1, 2])
+        with _cl:
+            if st.button("Close", icon=":material/close:", key="acct_close"):
+                st.rerun()
         role_chip = (f'<span class="acct-role">{html.escape(role.capitalize())}</span>'
                      if role in ("admin", "analyst") else "")
         st.markdown(
@@ -2511,6 +2521,7 @@ def render_rec_cards(rec_ids, articles: pd.DataFrame, key_prefix: str = "rec",
                     )
                     if st.button("View product", key=f"cl_{key_prefix}_{aid}"):  # transparent overlay (#3)
                         st.session_state["viewing_article_id"] = aid
+                        st.session_state["_scroll_top"] = True
                         st.switch_page("pages/_product.py")
                     _render_actions(
                         d["article_id"], key_prefix,
@@ -2533,6 +2544,7 @@ def render_catalogue_card(item: dict, key_prefix: str,
         st.markdown(_card_html(item, rank=None, score=score, reason=reason), unsafe_allow_html=True)
         if st.button("View product", key=f"cl_{key_prefix}_{aid}"):  # transparent overlay (#3)
             st.session_state["viewing_article_id"] = aid
+            st.session_state["_scroll_top"] = True
             st.switch_page("pages/_product.py")
         _render_actions(
             aid, key_prefix,

@@ -40,10 +40,27 @@ def _stars(n: float) -> str:
     return "★" * f + "☆" * (5 - f)
 
 
+def _review_card(rv) -> str:
+    import html as _html
+    name = _html.escape(rv["display_name"] or "Anonymous")
+    comment = _html.escape((rv["comment"] or "").strip())
+    date = (rv["created_at"] or "")[:10]
+    comment_html = (f'<p style="margin:6px 0 0;font-size:14px;line-height:1.5;">{comment}</p>'
+                    if comment else "")
+    return (
+        f'<div class="card" style="padding:13px 15px;margin-bottom:8px;">'
+        f'<div style="display:flex;justify-content:space-between;align-items:center;">'
+        f'<span style="font-weight:600;font-size:14px;">{name}</span>'
+        f'<span style="color:var(--accent);">{_stars(rv["rating"])}</span></div>'
+        f'{comment_html}'
+        f'<p class="muted" style="margin:6px 0 0;font-size:12px;">{date}</p></div>'
+    )
+
+
 @st.dialog("Ratings & reviews", width="large")
 def _reviews_dialog(article_id: str, user):
-    """Detailed reviews popup — summary + write/edit form + every review."""
-    import html as _html
+    """Detailed reviews popup — summary, a one-time write form (locked after you
+    submit, #9), and every review."""
     summary = db.review_summary(article_id)
     if summary["count"]:
         st.markdown(
@@ -62,39 +79,38 @@ def _reviews_dialog(article_id: str, user):
             _go_signin()
     else:
         existing = db.user_review(user["id"], article_id)
-        with st.form(f"review_form_{article_id}"):
-            rv_rating = st.slider("Your rating", 1, 5,
-                                  value=(existing["rating"] if existing else 5),
-                                  key=f"rev_rating_{article_id}")
-            rv_comment = st.text_area("Your review (optional)",
-                                      value=(existing["comment"] if existing else ""),
-                                      placeholder="What did you think of this product?",
-                                      key=f"rev_comment_{article_id}")
-            if st.form_submit_button("Submit review", type="primary"):
-                db.add_review(user["id"], article_id, rv_rating, rv_comment)
-                db.log_rating(user["id"], article_id, rv_rating)  # recommender signal
-                st.toast("Thanks for your review!", icon=":material/check_circle:")
-                st.rerun()
+        if existing:
+            # Already reviewed — show it read-only; no re-editing (#9).
+            cmt = (existing["comment"] or "").strip()
+            st.markdown(
+                f'<div class="card" style="padding:14px 16px;border-color:var(--accent);">'
+                f'<div style="display:flex;justify-content:space-between;align-items:center;">'
+                f'<span style="font-weight:600;">Your review</span>'
+                f'<span style="color:var(--accent);">{_stars(existing["rating"])}</span></div>'
+                + (f'<p style="margin:6px 0 0;font-size:14px;">{__import__("html").escape(cmt)}</p>' if cmt else "")
+                + '<p class="muted" style="margin:6px 0 0;font-size:12px;">'
+                  'Thanks — your review is posted.</p></div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            with st.form(f"review_form_{article_id}"):
+                rv_rating = st.slider("Your rating", 1, 5, value=5,
+                                      key=f"rev_rating_{article_id}")
+                rv_comment = st.text_area("Your review (optional)",
+                                          placeholder="What did you think of this product?",
+                                          key=f"rev_comment_{article_id}")
+                if st.form_submit_button("Submit review", type="primary"):
+                    db.add_review(user["id"], article_id, rv_rating, rv_comment)
+                    db.log_rating(user["id"], article_id, rv_rating)  # recommender signal
+                    st.toast("Thanks for your review!", icon=":material/check_circle:")
+                    st.rerun()
 
     st.markdown('<div class="divider" style="margin:1rem 0 !important;"></div>', unsafe_allow_html=True)
     reviews = db.get_reviews(article_id)
     if not reviews:
         st.markdown("<p class='muted'>No reviews to show yet.</p>", unsafe_allow_html=True)
     for rv in reviews:
-        name = _html.escape(rv["display_name"] or "Anonymous")
-        comment = _html.escape((rv["comment"] or "").strip())
-        date = (rv["created_at"] or "")[:10]
-        comment_html = (f'<p style="margin:6px 0 0;font-size:14px;line-height:1.5;">{comment}</p>'
-                        if comment else "")
-        st.markdown(
-            f'<div class="card" style="padding:14px 16px;margin-bottom:8px;">'
-            f'<div style="display:flex;justify-content:space-between;align-items:center;">'
-            f'<span style="font-weight:600;">{name}</span>'
-            f'<span style="color:var(--accent);">{_stars(rv["rating"])}</span></div>'
-            f'{comment_html}'
-            f'<p class="muted" style="margin:6px 0 0;font-size:12px;">{date}</p></div>',
-            unsafe_allow_html=True,
-        )
+        st.markdown(_review_card(rv), unsafe_allow_html=True)
 
 
 def main():
@@ -104,6 +120,7 @@ def main():
 
     shared.apply_css()
     shared.render_sidebar(user)
+    shared.scroll_to_top_if_flagged()  # land at the top after a card click (#5)
 
     # Cards link to /product?aid=... (#3); fall back to the session value.
     article_id = st.query_params.get("aid") or st.session_state.get("viewing_article_id")
@@ -163,13 +180,14 @@ def main():
         st.markdown(
             f'<div class="card" style="padding:0;">'
             f'  <div class="card-image-wrapper" style="aspect-ratio: 1/1;">'
-            f'    <img class="card-image" src="{img_src}" alt="product image" />'
+            f'    <img class="card-image" src="{img_src}" alt="product image" '
+            f'style="width:100%;height:100%;object-fit:cover;display:block;" />'
             f'  </div>'
             f'</div>',
             unsafe_allow_html=True,
         )
 
-        # ---------- ratings summary card (#11) — details open in a popup ----------
+        # ---------- ratings summary + inline review previews (#11) ----------
         _rs = db.review_summary(article_id)
         if _rs["count"]:
             st.markdown(
@@ -181,7 +199,13 @@ def main():
                 f'review{"s" if _rs["count"] != 1 else ""}</div></div></div></div>',
                 unsafe_allow_html=True,
             )
-            _rev_label = f"See all {_rs['count']} reviews"
+            # show the first few reviews inline; the rest live in the popup
+            preview = db.get_reviews(article_id, limit=3)
+            st.markdown('<div style="height:10px;"></div>', unsafe_allow_html=True)
+            for rv in preview:
+                st.markdown(_review_card(rv), unsafe_allow_html=True)
+            _rev_label = (f"See all {_rs['count']} reviews"
+                          if _rs["count"] > len(preview) else "Write a review")
         else:
             st.markdown(
                 '<div class="card" style="padding:16px 18px;margin-top:12px;">'
