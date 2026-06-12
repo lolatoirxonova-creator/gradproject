@@ -1056,6 +1056,14 @@ CUSTOM_CSS = """
     font-size: 11px; font-weight: 600;
   }
 
+  /* Account popover close button — small circular icon, top-right (#8) */
+  .st-key-acct_close button {
+    width: 34px !important; min-width: 34px !important; height: 34px !important;
+    min-height: 34px !important; padding: 0 !important; border-radius: 50% !important;
+    margin-left: auto !important; display: flex !important;
+    align-items: center !important; justify-content: center !important;
+  }
+
   /* Guest Sign-in button — pinned top-right where the account avatar sits */
   .st-key-guest_signin { position: fixed; top: 14px; right: 22px; z-index: 1000; width: auto !important; }
   .st-key-guest_signin button { box-shadow: var(--shadow-2) !important; }
@@ -2195,10 +2203,10 @@ def render_account_menu(user: dict) -> None:
             unsafe_allow_html=True,
         )
     with st.popover(initials, use_container_width=False, key="account_menu"):
-        # Close the popover (#8) — any button click reruns and dismisses it.
-        _cl, _ = st.columns([1, 2])
+        # Close the popover (#8) — small icon button pinned top-right; any click reruns.
+        _, _cl = st.columns([5, 1])
         with _cl:
-            if st.button("Close", icon=":material/close:", key="acct_close"):
+            if st.button("", icon=":material/close:", key="acct_close", help="Close"):
                 st.rerun()
         role_chip = (f'<span class="acct-role">{html.escape(role.capitalize())}</span>'
                      if role in ("admin", "analyst") else "")
