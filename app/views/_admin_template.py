@@ -168,8 +168,8 @@ _TEMPLATE = r"""<!DOCTYPE html>
     --radius:14px;
   }
   *{box-sizing:border-box; margin:0; padding:0;}
-  html,body{background:var(--bg);}
-  body{font-family:'Inter', sans-serif; color:var(--text); display:flex; align-items:stretch;}
+  html,body{background:var(--bg); height:100%;}
+  body{font-family:'Inter', sans-serif; color:var(--text); display:flex; align-items:stretch; min-height:100%;}
   h1,h2,h3{font-family:'Fraunces', Georgia, serif; font-weight:600; letter-spacing:-0.01em;}
   .mono{font-family:'Inter', sans-serif; font-variant-numeric:tabular-nums;}
 
@@ -449,9 +449,19 @@ _TEMPLATE = r"""<!DOCTYPE html>
   // Shrink the embedding iframe to the active page's height (no dead space).
   // The component iframe is srcdoc → same-origin, so we can size frameElement.
   function fit(){
-    const h = Math.ceil(document.body.scrollHeight) + 4;
     const fe = window.frameElement;
     if(!fe) return;
+    // True content height = ticker + the visible page (both natural-height).
+    const ticker = document.querySelector('.ticker-wrap');
+    const page = document.querySelector('.page.active');
+    let content = 0;
+    if(ticker) content += ticker.offsetHeight;
+    if(page)   content += page.offsetHeight;
+    // Never shorter than the viewport, so the sidebar is full height and no
+    // app background shows below; grow past it for taller pages.
+    let vh = 0;
+    try { vh = window.parent.innerHeight || 0; } catch(e){}
+    const h = Math.max(content + 4, vh);
     fe.style.setProperty('height', h + 'px', 'important');
     let p = fe.parentElement;
     for(let i=0; i<3 && p; i++){ p.style.height = 'auto'; p = p.parentElement; }
