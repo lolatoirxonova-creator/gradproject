@@ -198,7 +198,7 @@ def main():
         "[data-testid='stMain'] [data-testid='stVerticalBlock']{gap:0!important;}"
         "[data-testid='stElementContainer'],.stCustomComponentV1,"
         "[data-testid='stIFrame']{margin:0!important;}"
-        ".st-key-account_menu{top:18px!important;right:26px!important;z-index:100001!important;}</style>",
+        ".st-key-account_menu{top:30px!important;right:26px!important;z-index:100001!important;}</style>",
         unsafe_allow_html=True,
     )
     shared.render_account_menu(user)
