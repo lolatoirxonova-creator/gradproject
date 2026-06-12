@@ -203,8 +203,10 @@ def main():
     )
     shared.render_account_menu(user)
 
+    # Initial height is a sensible default; the embedded script shrinks the
+    # iframe to each page's real content height (see fit() in _admin_template).
     html = _admin_template.render(_gather(), user, _html, json)
-    components.html(html, height=1480, scrolling=True)
+    components.html(html, height=1000, scrolling=True)
 
 
 main()

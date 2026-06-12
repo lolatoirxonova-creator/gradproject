@@ -90,7 +90,8 @@ def render(d: dict, user: dict, _html, json) -> str:
         t = (created or "")[11:19] or (created or "")[:10]
         icon = _BADGE_ICON.get(badge, "ti-check")
         log_rows += (
-            f"<tr><td class='time'>{esc(t)}</td>"
+            f"<tr data-action='{action.lower()}' data-badge='{badge}'>"
+            f"<td class='time'>{esc(t)}</td>"
             f"<td class='primary'>{esc(str(email))}</td>"
             f"<td>{esc(action)}</td><td>{esc(details)}</td>"
             f"<td class='mono'>{esc(str(ip))}</td>"
@@ -168,7 +169,7 @@ _TEMPLATE = r"""<!DOCTYPE html>
   }
   *{box-sizing:border-box; margin:0; padding:0;}
   html,body{background:var(--bg);}
-  body{font-family:'Inter', sans-serif; color:var(--text); display:flex; min-height:100vh;}
+  body{font-family:'Inter', sans-serif; color:var(--text); display:flex; align-items:stretch;}
   h1,h2,h3{font-family:'Fraunces', Georgia, serif; font-weight:600; letter-spacing:-0.01em;}
   .mono{font-family:'Inter', sans-serif; font-variant-numeric:tabular-nums;}
 
@@ -421,9 +422,18 @@ _TEMPLATE = r"""<!DOCTYPE html>
     </div>
     <div class="panel">
       <div class="logs-toolbar">
-        <input type="text" placeholder="Search by user, email, or order ID...">
-        <select><option>All actions</option><option>Sign-in</option><option>Purchase</option></select>
-        <select><option>All statuses</option><option>Success</option><option>Failed</option></select>
+        <input id="logSearch" type="text" placeholder="Search by user, email, or order ID...">
+        <select id="logAction">
+          <option value="all">All actions</option>
+          <option value="sign-in">Sign-in</option>
+          <option value="purchase">Purchase</option>
+        </select>
+        <select id="logStatus">
+          <option value="all">All statuses</option>
+          <option value="success">Success / Paid</option>
+          <option value="danger">Failed</option>
+          <option value="warning">Pay at store</option>
+        </select>
       </div>
       <table class="logs">
         <thead><tr><th>Time</th><th>User</th><th>Action</th><th>Details</th><th>IP address</th><th>Status</th></tr></thead>
@@ -436,6 +446,17 @@ _TEMPLATE = r"""<!DOCTYPE html>
 </div>
 
 <script>
+  // Shrink the embedding iframe to the active page's height (no dead space).
+  // The component iframe is srcdoc → same-origin, so we can size frameElement.
+  function fit(){
+    const h = Math.ceil(document.body.scrollHeight) + 4;
+    const fe = window.frameElement;
+    if(!fe) return;
+    fe.style.setProperty('height', h + 'px', 'important');
+    let p = fe.parentElement;
+    for(let i=0; i<3 && p; i++){ p.style.height = 'auto'; p = p.parentElement; }
+  }
+
   document.querySelectorAll('.nav-item').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
@@ -443,8 +464,33 @@ _TEMPLATE = r"""<!DOCTYPE html>
       const target = btn.dataset.page;
       document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
       document.getElementById('page-' + target).classList.add('active');
+      setTimeout(fit, 60);
     });
   });
+
+  // Activity-log filters (search + action + status).
+  const _q = document.getElementById('logSearch');
+  const _fa = document.getElementById('logAction');
+  const _fs = document.getElementById('logStatus');
+  function filterLogs(){
+    const term = (_q.value || '').toLowerCase();
+    const act = _fa.value, sta = _fs.value;
+    document.querySelectorAll('table.logs tbody tr').forEach(tr => {
+      if(!tr.dataset.action) return;  // skip the empty-state row
+      const okText = !term || tr.textContent.toLowerCase().includes(term);
+      const okAct = act === 'all' || tr.dataset.action === act;
+      const okSta = sta === 'all' || tr.dataset.badge === sta;
+      tr.style.display = (okText && okAct && okSta) ? '' : 'none';
+    });
+    setTimeout(fit, 30);
+  }
+  if(_q){ _q.addEventListener('input', filterLogs);
+          _fa.addEventListener('change', filterLogs);
+          _fs.addEventListener('change', filterLogs); }
+
+  window.addEventListener('resize', fit);
+  window.addEventListener('load', () => setTimeout(fit, 200));
+  setTimeout(fit, 400);
 
   const GRID = '#ECE7DA', MUT = '#9A9080';
   Chart.defaults.font.family = "'Inter', sans-serif";
