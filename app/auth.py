@@ -18,7 +18,7 @@ from app import db
 
 EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$")
 MIN_PASSWORD_LEN = 8
-ALLOWED_ROLES = ("customer", "admin", "analyst", "seller")
+ALLOWED_ROLES = ("customer", "admin")
 MAX_FAILED_ATTEMPTS = 5
 LOCKOUT_WINDOW_MINUTES = 15
 
@@ -173,24 +173,6 @@ DEMO_ACCOUNTS = [
         "scenario": "admin — sees Analytics + Admin panel + retrain button",
     },
     {
-        "email": "demo_analyst@example.com",
-        "password": "Analyst2026!",
-        "display_name": "Demo Analyst",
-        "role": "analyst",
-        "preferences": ["Top", "Skirt"],
-        "saves_n": 4,
-        "scenario": "analyst — Analytics dashboard, no Admin panel",
-    },
-    {
-        "email": "demo_seller@example.com",
-        "password": "Seller2026!",
-        "display_name": "Demo Seller",
-        "role": "seller",
-        "preferences": [],
-        "saves_n": 0,
-        "scenario": "seller — manages own product listings, sees orders for them",
-    },
-    {
         "email": "cold_user@example.com",
         "password": "Cold2026!",
         "display_name": "Cold User",
@@ -260,11 +242,12 @@ def seed_demo_accounts(articles_df=None) -> list[dict]:
             for aid in sample["article_id"].tolist():
                 db.log_interaction(user["id"], str(aid), "save")
 
-        if acc["role"] == "seller" and not db.list_seller_products(user["id"]):
-            for prod in DEMO_SELLER_PRODUCTS:
-                db.add_seller_product(user["id"], prod)
-
         seeded.append({"email": acc["email"], "status": "created"})
+
+    # Only customer + admin roles exist now — demote any legacy seller/analyst.
+    with db.get_conn() as conn:
+        conn.execute("UPDATE users SET role='customer' WHERE role IN ('seller','analyst')")
+        conn.commit()
     return seeded
 
 

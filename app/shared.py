@@ -2193,7 +2193,7 @@ def _account_dialog(user: dict) -> None:
     unread = db.unread_notifications(user["id"])
 
     role_chip = (f'<span class="acct-role">{html.escape(role.capitalize())}</span>'
-                 if role in ("admin", "analyst") else "")
+                 if role == "admin" else "")
     st.markdown(
         '<div class="acct-pop">'
         f'<div class="acct-avatar-lg">{html.escape(initials)}</div>'
@@ -2221,7 +2221,7 @@ def _account_dialog(user: dict) -> None:
             st.rerun()
         st.markdown('<div class="divider" style="margin:6px 0 !important;"></div>', unsafe_allow_html=True)
 
-    if role in ("customer", "analyst"):
+    if role == "customer":
         if st.button("Payment history", use_container_width=True, key="acct_orders",
                      icon=":material/receipt_long:"):
             st.switch_page("views/_orders.py")
@@ -2232,8 +2232,8 @@ def _account_dialog(user: dict) -> None:
             if k not in ("mmr_enabled", "show_tech_details"):  # preserve display prefs
                 st.session_state.pop(k, None)
         st.session_state["_scroll_top"] = True
-        if role in ("admin", "seller"):
-            st.rerun()                                  # guest fallback renders Catalogue
+        if role == "admin":
+            st.rerun()                                  # admin nav has no Catalogue; rerun → guest
         else:
             st.switch_page("views/1_Catalogue.py")      # clean guest landing (#15)
 

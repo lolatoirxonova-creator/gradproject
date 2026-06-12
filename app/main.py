@@ -607,20 +607,14 @@ def main():
 
     role = user.get("role")
     if role == "admin":
-        # Admins are a back-office role only — Analytics + Admin, no shopping pages.
+        # Admin is a back-office role only — the control-room dashboard (its own
+        # dark UI is rendered inside the page; Streamlit's sidebar is hidden there).
         pages = [
-            st.Page("views/_analytics.py", title="Analytics",
-                    icon=":material/bar_chart:", url_path="analytics", default=True),
-            st.Page("views/_admin.py", title="Admin",
-                    icon=":material/shield_person:", url_path="admin"),
-        ]
-    elif role == "seller":
-        # Sellers are a back-office role — manage their own listings + see orders.
-        pages = [
-            st.Page("views/_seller.py", title="Seller panel",
-                    icon=":material/store:", url_path="seller", default=True),
+            st.Page("views/_analytics.py", title="Dashboard",
+                    icon=":material/dashboard:", url_path="dashboard", default=True),
         ]
     else:
+        # Everyone non-admin gets the customer storefront.
         n_cart = db.cart_count(user["id"])
         cart_title = f"Cart ({n_cart})" if n_cart else "Cart"
         cmp_n = len(shared.compare_ids())
@@ -637,21 +631,7 @@ def main():
                     icon=":material/favorite:", url_path="wishlist"),
             st.Page("views/_cart.py", title=cart_title,
                     icon=":material/shopping_bag:", url_path="cart"),
-        ]
-        # Research pages (Evaluation/Algorithms/Analytics) are for the analyst role,
-        # not the customer-facing shopping experience.
-        if role == "analyst":
-            pages += [
-                st.Page("views/3_Evaluation.py", title="Evaluation",
-                        icon=":material/insights:", url_path="evaluation"),
-                st.Page("views/4_Compare.py", title="Algorithms",
-                        icon=":material/compare_arrows:", url_path="algo-compare"),
-                st.Page("views/_analytics.py", title="Analytics",
-                        icon=":material/bar_chart:", url_path="analytics"),
-            ]
-        # Hidden pages — reached via buttons / switch_page; nav links hidden in CSS
-        # (a[href$="/product|/checkout|/success|/orders"]).
-        pages += [
+            # Hidden pages — reached via buttons / switch_page; nav links hidden in CSS.
             st.Page("views/_product.py", title="Product", url_path="product"),
             st.Page("views/_checkout.py", title="Checkout", url_path="checkout"),
             st.Page("views/_success.py", title="Order confirmed", url_path="success"),
