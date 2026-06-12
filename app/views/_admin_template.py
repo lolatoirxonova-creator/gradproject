@@ -464,11 +464,13 @@ _TEMPLATE = r"""<!DOCTYPE html>
     let content = 0;
     if(ticker) content += ticker.offsetHeight;
     if(page)   content += page.offsetHeight;
-    // Never shorter than the viewport, so the sidebar is full height and no
-    // app background shows below; grow past it for taller pages.
-    let vh = 0;
+    // Fill exactly from the frame's top to the viewport bottom — no overflow
+    // (so no scroll / app background shows past it), but never clip taller pages.
+    let top = 0, vh = 0;
+    try { top = Math.max(0, fe.getBoundingClientRect().top); } catch(e){}
     try { vh = window.parent.innerHeight || 0; } catch(e){}
-    const h = Math.max(content + 4, vh);
+    const avail = vh ? (vh - top - 2) : 0;
+    const h = Math.max(content + 4, avail);
     fe.style.setProperty('height', h + 'px', 'important');
     let p = fe.parentElement;
     for(let i=0; i<3 && p; i++){ p.style.height = 'auto'; p = p.parentElement; }
