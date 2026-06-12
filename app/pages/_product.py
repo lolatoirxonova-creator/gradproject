@@ -234,20 +234,20 @@ def main():
         st.markdown(f"<h2 style='margin:4px 0 8px 0 !important;'>{price_html}</h2>",
                     unsafe_allow_html=True)
 
-        # ---------- one line: short description + rating (#7) ----------
+        # ---------- description (full) + rating ----------
         _sum0 = db.review_summary(article_id)
         _desc0 = _format_value(item.get("detail_desc"))
-        _short = ""
-        if _desc0 and _desc0 != "—":
-            _short = (_desc0[:108].rsplit(" ", 1)[0] + "…") if len(_desc0) > 108 else _desc0
+        _short = _desc0 if (_desc0 and _desc0 != "—") else ""  # full text, no truncation
         _rating0 = ""
         if _sum0["count"]:
             _f = int(round(_sum0["avg"]))
             _rating0 = (f'<span style="color:var(--accent);">{"★" * _f}{"☆" * (5 - _f)}</span> '
                         f'<span class="muted">{_sum0["avg"]} ({_sum0["count"]})</span>')
-        if _short or _rating0:
-            sep = ' &nbsp;<span style="color:var(--border-2);">·</span>&nbsp; ' if (_short and _rating0) else ""
-            st.markdown(f'<p class="desc-rating">{_short}{sep}{_rating0}</p>', unsafe_allow_html=True)
+        if _short:
+            st.markdown(f'<p class="desc-rating">{_short}</p>', unsafe_allow_html=True)
+        if _rating0:
+            st.markdown(f'<p style="margin:0 0 14px;font-size:14px;">{_rating0}</p>',
+                        unsafe_allow_html=True)
 
         # ---------- Details spec table — beside the image (#5) ----------
         if cosmetics:
@@ -321,15 +321,7 @@ def main():
                     st.rerun()
             st.caption(f"{len(saved)} item{'s' if len(saved) != 1 else ''} in your wishlist")
 
-    # ---------- full description ----------
-    detail = _format_value(item.get("detail_desc"))
-    if detail and detail != "—":
-        st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-        st.markdown("<h2>Description</h2>", unsafe_allow_html=True)
-        st.markdown(
-            f'<p style="color:#1d1d1f; max-width: 700px; line-height: 1.6; font-size: 15px;">{detail}</p>',
-            unsafe_allow_html=True,
-        )
+    # (full description now shown in the info column beside the image, not repeated)
 
     # ---------- similar items ----------
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)

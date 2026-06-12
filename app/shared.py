@@ -1119,8 +1119,7 @@ CUSTOM_CSS = """
 
   /* ===== Product one-line description + rating (#7) ===== */
   .desc-rating {
-    font-size: 14px; color: var(--ink-2); line-height: 1.5; margin: 0 0 14px;
-    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+    font-size: 14px; color: var(--ink-2); line-height: 1.6; margin: 0 0 14px;
   }
 
   /* ===== Inputs: keep placeholder inside the field, clear of trailing icons (#16) ===== */

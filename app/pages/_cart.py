@@ -53,10 +53,13 @@ def main():
                 f'line{"s" if len(lines) != 1 else ""} in your cart.</p>', unsafe_allow_html=True)
 
     subtotal = 0.0
-    for line in lines:
+    for _i, line in enumerate(lines):
         aid, qty = line["article_id"], line["quantity"]
         if aid not in by_id.index:
             continue
+        if _i:  # delicate separator between cart lines (they were too close)
+            st.markdown('<div style="border-top:1px solid var(--border);margin:20px 0;"></div>',
+                        unsafe_allow_html=True)
         item = by_id.loc[aid].to_dict()
         item["article_id"] = aid
         price = shared.display_price(aid, prices)

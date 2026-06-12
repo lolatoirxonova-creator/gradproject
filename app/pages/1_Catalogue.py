@@ -293,7 +293,8 @@ def main():
     st.markdown(f'<p class="muted">{total:,} item{"s" if total != 1 else ""} · '
                 f'page {page} of {total_pages}</p>', unsafe_allow_html=True)
     if total == 0:
-        st.markdown('<div class="card"><p class="muted">No items match these filters. '
+        st.markdown('<div class="card" style="padding:40px 24px;text-align:center;">'
+                    '<p class="muted" style="margin:0;">No items match these filters. '
                     'Try clearing them.</p></div>', unsafe_allow_html=True)
         return
 
