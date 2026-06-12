@@ -228,9 +228,9 @@ def main():
         reg, sale = shared.catalogue_price(article_id)
         if sale is not None:
             price_html = (f"<s style='color:var(--muted);font-weight:400;font-size:21px;'>"
-                          f"${reg:,.2f}</s> <span style='color:var(--accent-2);'>${sale:,.2f}</span>")
+                          f"{shared.money(reg)}</s> <span style='color:var(--accent-2);'>{shared.money(sale)}</span>")
         else:
-            price_html = f"${reg:,.2f}"
+            price_html = shared.money(reg)
         st.markdown(f"<h2 style='margin:4px 0 8px 0 !important;'>{price_html}</h2>",
                     unsafe_allow_html=True)
 

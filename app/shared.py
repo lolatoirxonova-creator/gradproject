@@ -1543,6 +1543,19 @@ def _cosmetics_price_map() -> dict:
     return out
 
 
+# Catalogue prices are stored as small USD figures; the platform is presented in
+# Uzbekistani so'm, so all *displayed* amounts are converted at this fixed rate.
+# Internal maths (orders, cart, order_items) stays in the stored unit — only
+# rendering goes through money().
+UZS_PER_USD = 12600
+
+
+def money(amount: float | None) -> str:
+    """Format a stored (USD) amount as Uzbekistani so'm, e.g. '239 400 so'm'."""
+    val = round((amount or 0) * UZS_PER_USD)
+    return f"{val:,}".replace(",", " ") + " so'm"
+
+
 def catalogue_price(article_id: str) -> tuple[float, float | None]:
     """(regular_price, sale_price_or_None) in $ for a catalogue item."""
     if cosmetics_mode():
@@ -1659,7 +1672,7 @@ def cosmetics_assistant_reply(query: str, catalogue=None):
     if tokens & {"hi", "hello", "hey", "salom", "help"} and len(tokens) <= 2:
         return ("Hi! I can help you find products. Tell me a category (skincare, "
                 "makeup, fragrance, hair & body), a concern (dry skin, anti-aging, "
-                "oily), a budget (\"under $30\"), or who it's for (\"a gift for her\").", [])
+                "oily), a budget (\"under 300 000 so'm\"), or who it's for (\"a gift for her\").", [])
 
     def vals(col):
         return {str(v) for v in df[col].dropna()} if col in df.columns else set()
@@ -1693,11 +1706,15 @@ def cosmetics_assistant_reply(query: str, catalogue=None):
     want_sale = any(w in q for w in ("sale", "discount", "deal", "offer", "bargain"))
     want_gift = any(w in q for w in ("gift", "present", "for her", "for him"))
 
+    # Budget is now expressed in so'm (e.g. "under 300 000 so'm"); convert the
+    # parsed figure back to the stored USD unit so it compares against effective_price.
     cap = None
-    m = (re.search(r"(?:under|below|less than|max|up ?to|<)\s*\$?\s*(\d+)", q)
-         or re.search(r"\$\s*(\d+)", q))
+    m = (re.search(r"(?:under|below|less than|max|up ?to|<)\s*([\d][\d\s,\.]*)", q)
+         or re.search(r"([\d][\d\s,\.]*)\s*(?:so'?m|som|sum)", q))
     if m:
-        cap = float(m.group(1))
+        digits = re.sub(r"[^\d]", "", m.group(1))
+        if digits:
+            cap = float(digits) / UZS_PER_USD
 
     concern_terms = []
     for kw, terms in _ASSIST_CONCERNS.items():
@@ -1768,7 +1785,7 @@ def cosmetics_assistant_reply(query: str, catalogue=None):
     if want_budget:
         bits.append("budget-friendly")
     if cap is not None:
-        bits.append(f"under ${cap:.0f}")
+        bits.append(f"under {money(cap)}")
     if want_sale:
         bits.append("on sale")
     if want_gift and not (want_cat or want_type):
@@ -2452,10 +2469,10 @@ def _card_html(item: dict, rank: int | None = None,
     if cosmetics_mode():
         reg, sale = catalogue_price(aid)
         if sale is not None:
-            price_html = (f'<p class="card-price"><s>${reg:,.2f}</s>'
-                          f'<span class="sale">${sale:,.2f}</span></p>')
+            price_html = (f'<p class="card-price"><s>{money(reg)}</s>'
+                          f'<span class="sale">{money(sale)}</span></p>')
         elif reg:
-            price_html = f'<p class="card-price">${reg:,.2f}</p>'
+            price_html = f'<p class="card-price">{money(reg)}</p>'
     reason_html = (
         f'<p class="card-reason"><span class="why-icon">'
         f'<svg width="11" height="11" viewBox="0 0 24 24" fill="#C19A3E" '

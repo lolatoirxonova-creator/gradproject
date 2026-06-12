@@ -75,8 +75,8 @@ def main():
         item = by_id.loc[aid]
         if label == "Price":
             reg, sale = shared.catalogue_price(aid)
-            return (f"<s style='color:var(--muted);'>${reg:,.2f}</s> "
-                    f"<b style='color:var(--accent-2);'>${sale:,.2f}</b>") if sale else f"<b>${reg:,.2f}</b>"
+            return (f"<s style='color:var(--muted);'>{shared.money(reg)}</s> "
+                    f"<b style='color:var(--accent-2);'>{shared.money(sale)}</b>") if sale else f"<b>{shared.money(reg)}</b>"
         if label == "Rating":
             s = db.review_summary(aid)
             if not s["count"]:

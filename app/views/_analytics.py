@@ -145,7 +145,7 @@ def _gather() -> dict:
         status = "Paid online" if r["status"] == "paid" else "Pay at store"
         badge = "success" if r["status"] == "paid" else "warning"
         logs.append((r["created_at"], r["email"], "Purchase",
-                     f"Order #{r['id']} — ${r['total']:,.2f}, {r['n_items']} item(s)",
+                     f"Order #{r['id']} — {shared.money(r['total'])}, {r['n_items']} item(s)",
                      "—", status, badge))
     for r in login_logs:
         ok = r["success"]
@@ -183,14 +183,16 @@ def main():
                     unsafe_allow_html=True)
         return
 
-    # Hide Streamlit's sidebar/padding so the dark control-room fills the viewport;
-    # keep the gold account avatar (top-right) for logout.
+    # Hide Streamlit's sidebar + its st.logo (the iframe carries its own brand),
+    # zero the padding so the console fills the viewport, and drop the gold account
+    # avatar below the scrolling ticker so the two don't overlap.
     st.markdown(
-        "<style>[data-testid='stSidebar'],[data-testid='stSidebarCollapsedControl']"
-        "{display:none!important;}"
+        "<style>[data-testid='stSidebar'],[data-testid='stSidebarCollapsedControl'],"
+        "[data-testid='stLogo'],[data-testid='stLogoLink']{display:none!important;}"
         "[data-testid='stMainBlockContainer']{padding:0!important;max-width:100%!important;"
         "min-height:0!important;}"
-        "[data-testid='stMainBlockContainer']::after{display:none!important;}</style>",
+        "[data-testid='stMainBlockContainer']::after{display:none!important;}"
+        ".st-key-account_menu{top:52px!important;right:30px!important;z-index:100001!important;}</style>",
         unsafe_allow_html=True,
     )
     shared.render_account_menu(user)

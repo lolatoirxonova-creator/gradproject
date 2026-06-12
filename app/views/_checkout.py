@@ -122,7 +122,7 @@ def main():
                 st.text_input("CVC", placeholder="123", max_chars=4,
                               type="password", key="co_cvc");         _field_err("co_cvc", errors)
 
-            placed = st.form_submit_button(f"Pay ${total:,.2f} & place order",
+            placed = st.form_submit_button(f"Pay {shared.money(total)} & place order",
                                            type="primary", use_container_width=True)
 
         if placed:
@@ -144,17 +144,17 @@ def main():
             name = by_id.loc[aid].get("prod_name") if aid in by_id.index else aid
             st.markdown(
                 f'<div style="display:flex;justify-content:space-between;font-size:14px;margin-bottom:4px;">'
-                f'<span>{name} × {qty}</span><span>${price * qty:,.2f}</span></div>',
+                f'<span>{name} × {qty}</span><span>{shared.money(price * qty)}</span></div>',
                 unsafe_allow_html=True,
             )
         st.markdown('<div class="divider" style="margin:10px 0 !important;"></div>', unsafe_allow_html=True)
         st.markdown(f'<div style="display:flex;justify-content:space-between;font-size:14px;">'
-                    f'<span class="muted">Subtotal</span><span>${subtotal:,.2f}</span></div>',
+                    f'<span class="muted">Subtotal</span><span>{shared.money(subtotal)}</span></div>',
                     unsafe_allow_html=True)
         st.markdown(f'<div style="display:flex;justify-content:space-between;font-size:14px;margin-bottom:6px;">'
-                    f'<span class="muted">Shipping</span><span>${SHIP_FLAT:,.2f}</span></div>',
+                    f'<span class="muted">Shipping</span><span>{shared.money(SHIP_FLAT)}</span></div>',
                     unsafe_allow_html=True)
-        st.markdown(f"<h2 style='margin-top:6px !important;'>Total ${total:,.2f}</h2>",
+        st.markdown(f"<h2 style='margin-top:6px !important;'>Total {shared.money(total)}</h2>",
                     unsafe_allow_html=True)
         if st.button("← Back to cart", use_container_width=True):
             st.switch_page("views/_cart.py")

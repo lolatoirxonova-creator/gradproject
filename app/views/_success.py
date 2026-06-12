@@ -101,7 +101,7 @@ def main():
         name = by_id.loc[aid].get("prod_name") if aid in by_id.index else aid
         st.markdown(
             f'<div style="display:flex;justify-content:space-between;font-size:15px;margin-bottom:6px;">'
-            f'<span>{name} × {qty}</span><span>${price * qty:,.2f}</span></div>',
+            f'<span>{name} × {qty}</span><span>{shared.money(price * qty)}</span></div>',
             unsafe_allow_html=True,
         )
     # estimated delivery — within 3 days from now (#13)
@@ -121,7 +121,7 @@ def main():
     )
 
     st.markdown('<div class="divider" style="margin:10px 0 !important;"></div>', unsafe_allow_html=True)
-    st.markdown(f"<h2 style='margin-top:0 !important;'>Total paid: ${order['total']:,.2f}</h2>",
+    st.markdown(f"<h2 style='margin-top:0 !important;'>Total paid: {shared.money(order['total'])}</h2>",
                 unsafe_allow_html=True)
 
     b1, b2, b3 = st.columns(3)

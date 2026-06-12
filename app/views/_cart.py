@@ -77,7 +77,7 @@ def main():
             st.markdown(
                 f"**{item.get('prod_name') or aid}**  \n"
                 f"<span class='muted'>{item.get('product_type_name') or ''} · "
-                f"{item.get('colour_group_name') or ''}</span>  \n${price:,.2f} each",
+                f"{item.get('colour_group_name') or ''}</span>  \n{shared.money(price)} each",
                 unsafe_allow_html=True,
             )
         with c_qty:
@@ -91,7 +91,7 @@ def main():
                 db.set_cart_qty(user["id"], aid, qty + 1)
                 st.rerun()
         with c_tot:
-            st.markdown(f"<div style='padding-top:6px;font-weight:600;'>${line_total:,.2f}</div>",
+            st.markdown(f"<div style='padding-top:6px;font-weight:600;'>{shared.money(line_total)}</div>",
                         unsafe_allow_html=True)
         with c_rm:
             if st.button("", icon=":material/delete:", key=f"cart_rm_{aid}",
@@ -102,7 +102,7 @@ def main():
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
     s1, s2 = st.columns([3, 2])
     with s2:
-        st.markdown(f"<h2 style='margin-top:0 !important;'>Subtotal: ${subtotal:,.2f}</h2>",
+        st.markdown(f"<h2 style='margin-top:0 !important;'>Subtotal: {shared.money(subtotal)}</h2>",
                     unsafe_allow_html=True)
         st.markdown('<p class="muted">Shipping & taxes calculated at checkout.</p>',
                     unsafe_allow_html=True)

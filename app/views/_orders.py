@@ -64,7 +64,7 @@ def main():
     m1, m2, m3 = st.columns(3)
     m1.metric("Orders", len(orders))
     m2.metric("Items bought", sum(o["n_items"] for o in orders))
-    m3.metric("Total spent", f"${total_spent:,.2f}")
+    m3.metric("Total spent", shared.money(total_spent))
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
     by_id = shared.load_articles().set_index("article_id")
@@ -81,7 +81,7 @@ def main():
             f'<div style="display:flex;justify-content:space-between;font-size:13px;'
             f'padding:5px 0;color:var(--ink-2);">'
             f'<span>{html.escape(_name(it["article_id"]))} &times; {it["quantity"]}</span>'
-            f'<span>&#36;{it["unit_price"] * it["quantity"]:,.2f}</span></div>'
+            f'<span>{html.escape(shared.money(it["unit_price"] * it["quantity"]))}</span></div>'
             for it in o["items"]
         )
         st.markdown(
@@ -95,7 +95,7 @@ def main():
             f'  <div style="border-top:1px solid var(--border);padding-top:6px;">{lines}</div>'
             f'  <div style="display:flex;justify-content:space-between;border-top:1px solid var(--border);'
             f'margin-top:6px;padding-top:8px;font-weight:700;">'
-            f'    <span>Total</span><span>&#36;{o["total"]:,.2f}</span></div>'
+            f'    <span>Total</span><span>{html.escape(shared.money(o["total"]))}</span></div>'
             f'</div>',
             unsafe_allow_html=True,
         )

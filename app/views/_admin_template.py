@@ -9,6 +9,8 @@ data layer stays readable.
 
 from __future__ import annotations
 
+from app import shared
+
 # Warm gold gradient for the conversion funnel bars.
 _FUNNEL_COLORS = ["#B8862A", "#C9A24E", "#D7B772", "#E3CB9B", "#EFDFC2"]
 _BADGE_ICON = {"success": "ti-check", "warning": "ti-clock",
@@ -26,12 +28,19 @@ def _initials(user) -> str:
 def render(d: dict, user: dict, _html, json) -> str:
     esc = _html.escape
 
+    # Inline the Barakaly bloom mark (same logo as the rest of the app).
+    from pathlib import Path
+    try:
+        mark_svg = (Path(__file__).resolve().parents[1] / "assets" / "logo_icon.svg").read_text()
+    except Exception:
+        mark_svg = "B"
+
     # ---- ticker (real metrics, no fabricated trend arrows) ----
     tick = [
-        f"GMV TODAY <strong class='mono'>${d['gmv_today']:,.0f}</strong>",
+        f"GMV TODAY <strong class='mono'>{shared.money(d['gmv_today'])}</strong>",
         f"ORDERS TODAY <strong class='mono'>{d['orders_today']:,}</strong>",
         f"NEW SIGNUPS (30D) <strong class='mono'>{d['new_30']:,}</strong>",
-        f"TOTAL GMV <strong class='mono'>${d['gmv']:,.0f}</strong>",
+        f"TOTAL GMV <strong class='mono'>{shared.money(d['gmv'])}</strong>",
         f"REPEAT RATE <strong class='mono'>{d['repeat_rate']:.1f}%</strong>",
         f"CART ABANDON <strong class='mono'>{d['cart_abandon']:.1f}%</strong>",
         f"AVG RATING <strong class='mono'>{d['avg_rating']:.1f}/5</strong>",
@@ -94,21 +103,21 @@ def render(d: dict, user: dict, _html, json) -> str:
 
     repl = {
         "__BRAND__": "Barakaly",
-        "__MARK__": "B",
+        "__MARK_SVG__": mark_svg,
         "__ADMIN_INITIALS__": _initials(user),
         "__ADMIN_NAME__": esc(user.get("display_name") or user.get("name") or "Administrator"),
         "__TICKER__": ticker_inner,
-        "__GMV__": f"${d['gmv']:,.0f}",
+        "__GMV__": shared.money(d['gmv']),
         "__GMV_C__": gmv_c, "__GMV_I__": gmv_i, "__GMV_T__": gmv_t,
         "__ORDERS__": f"{d['n_orders']:,}",
         "__ORD_C__": ord_c, "__ORD_I__": ord_i, "__ORD_T__": ord_t,
         "__BUYERS__": f"{d['buyers']:,}",
         "__BUY_C__": buy_c, "__BUY_I__": buy_i, "__BUY_T__": buy_t,
-        "__AOV__": f"${d['aov']:,.2f}",
+        "__AOV__": shared.money(d['aov']),
         "__AOV_C__": aov_c, "__AOV_I__": aov_i, "__AOV_T__": aov_t,
         "__ABANDON__": f"{d['cart_abandon']:.1f}%",
         "__REPEAT__": f"{d['repeat_rate']:.1f}%",
-        "__CLV__": f"${d['clv']:,.0f}",
+        "__CLV__": shared.money(d['clv']),
         "__REVIEWS__": f"{d['reviews']:,}",
         "__AVG_RATING__": f"{d['avg_rating']:.1f}",
         "__STATUS_LEGEND__": status_legend,
@@ -117,7 +126,7 @@ def render(d: dict, user: dict, _html, json) -> str:
         "__LOG_COUNT__": f"{d['total_events']:,}",
         # ---- chart data (JSON) ----
         "__REV_LABELS__": json.dumps(d["rev_labels"]),
-        "__REV_DATA__": json.dumps(d["rev_data"]),
+        "__REV_DATA__": json.dumps([round(x * shared.UZS_PER_USD) for x in d["rev_data"]]),
         "__STATUS_LABELS__": json.dumps(status_labels),
         "__STATUS_DATA__": json.dumps(status_data),
         "__STATUS_COLORS__": json.dumps(status_colors),
@@ -166,9 +175,8 @@ _TEMPLATE = r"""<!DOCTYPE html>
   .sidebar{width:230px; background:var(--surface); border-right:1px solid var(--border);
     padding:24px 16px; display:flex; flex-direction:column; gap:4px; flex-shrink:0;}
   .brand{display:flex; align-items:center; gap:10px; padding:0 8px 26px;}
-  .brand .mark{width:36px; height:36px; background:var(--accent); color:#FFF; border-radius:10px;
-    display:flex; align-items:center; justify-content:center;
-    font-family:'Fraunces', serif; font-weight:700; font-size:18px;}
+  .brand .mark{width:40px; height:40px; display:flex; align-items:center; justify-content:center; flex-shrink:0;}
+  .brand .mark svg{width:40px; height:40px;}
   .brand .name{font-size:18px; font-weight:700; font-family:'Fraunces', serif;}
   .brand .sub{font-size:10.5px; color:var(--text-dim); letter-spacing:0.14em; font-weight:600;}
   .nav-section-label{font-size:10.5px; text-transform:uppercase; letter-spacing:0.12em; color:var(--text-dim);
@@ -269,7 +277,7 @@ _TEMPLATE = r"""<!DOCTYPE html>
 
 <aside class="sidebar">
   <div class="brand">
-    <div class="mark">__MARK__</div>
+    <div class="mark">__MARK_SVG__</div>
     <div>
       <div class="name">__BRAND__</div>
       <div class="sub">ADMIN CONSOLE</div>
@@ -300,7 +308,6 @@ _TEMPLATE = r"""<!DOCTYPE html>
   <div class="page active" id="page-dashboard">
     <div class="topbar">
       <div><h1>Dashboard</h1><div class="desc">Barakaly marketplace performance overview</div></div>
-      <div class="range-select"><button class="pill-btn active">ALL TIME</button></div>
     </div>
 
     <div class="metrics-grid">
@@ -438,14 +445,17 @@ _TEMPLATE = r"""<!DOCTYPE html>
   const GRID = '#ECE7DA', MUT = '#9A9080';
   Chart.defaults.font.family = "'Inter', sans-serif";
   Chart.defaults.color = MUT;
+  const somAxis = (v) => (v >= 1e6 ? (v/1e6).toFixed(1)+'M' : v >= 1e3 ? (v/1e3).toFixed(0)+'K' : ''+v) + " so'm";
+  const somFull = (v) => v.toLocaleString().replace(/,/g, ' ') + " so'm";
 
   new Chart(document.getElementById('revenueChart'), {
     type: 'line',
     data: { labels: __REV_LABELS__, datasets: [{ label: 'Revenue', data: __REV_DATA__,
       borderColor: '#C19A3E', backgroundColor: 'rgba(193,154,62,0.10)', fill: true,
       tension: 0.35, pointRadius: 3, pointBackgroundColor: '#C19A3E' }] },
-    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
-      scales: { y: { ticks: { color: MUT, callback: (v) => '$' + v.toLocaleString() }, grid: { color: GRID } },
+    options: { responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => somFull(ctx.parsed.y) } } },
+      scales: { y: { ticks: { color: MUT, callback: somAxis }, grid: { color: GRID } },
                 x: { ticks: { color: MUT }, grid: { display: false } } } }
   });
 
@@ -490,8 +500,9 @@ _TEMPLATE = r"""<!DOCTYPE html>
     data: { labels: __REV_LABELS__, datasets: [{ label: 'Revenue', data: __REV_DATA__,
       borderColor: '#A07E2C', backgroundColor: 'rgba(160,126,44,0.10)', fill: true,
       tension: 0.35, pointRadius: 3, pointBackgroundColor: '#A07E2C' }] },
-    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
-      scales: { y: { ticks: { color: MUT, callback: (v) => '$' + v.toLocaleString() }, grid: { color: GRID } },
+    options: { responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => somFull(ctx.parsed.y) } } },
+      scales: { y: { ticks: { color: MUT, callback: somAxis }, grid: { color: GRID } },
                 x: { ticks: { color: MUT }, grid: { display: false } } } }
   });
 </script>
