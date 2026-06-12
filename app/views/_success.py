@@ -88,12 +88,6 @@ def main():
                 unsafe_allow_html=True)
     st.markdown(f"<h1 class='hero-headline' style='text-align:center;'>Order #{order['id']} confirmed.</h1>",
                 unsafe_allow_html=True)
-    st.markdown(
-        f'<p class="subtitle">Thanks, {user.get("display_name", "")}! Your order of '
-        f'{order["n_items"]} item{"s" if order["n_items"] != 1 else ""} is placed. '
-        f'A confirmation would be emailed in a real deployment (this is a demo).</p>',
-        unsafe_allow_html=True,
-    )
 
     st.markdown("<h2>Order summary</h2>", unsafe_allow_html=True)
     for it in order["items"]:
