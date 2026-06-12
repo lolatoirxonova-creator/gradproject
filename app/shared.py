@@ -2182,83 +2182,77 @@ def _initials(name: str) -> str:
     return "?"
 
 
-def render_account_menu(user: dict) -> None:
-    """Top-right account avatar that opens a dropdown (name, email, role, logout).
-
-    The conventional web pattern: a circular initials avatar in the corner that
-    reveals the full identity + a destructive logout on click. Rendered in the
-    main area and pinned top-right via the `.st-key-account_menu` scope in CSS.
-    """
+@st.dialog("Account")
+def _account_dialog(user: dict) -> None:
+    """Account panel as a modal — it has a reliable native × close (unlike a
+    popover, which can't be dismissed by an in-content button)."""
     import html
     name = user.get("display_name") or user.get("email", "")
     email = user.get("email", "")
     role = user.get("role", "customer")
     initials = _initials(name)
     unread = db.unread_notifications(user["id"])
-    if unread:  # red badge on the avatar when there are unread notifications
+
+    role_chip = (f'<span class="acct-role">{html.escape(role.capitalize())}</span>'
+                 if role in ("admin", "analyst") else "")
+    st.markdown(
+        '<div class="acct-pop">'
+        f'<div class="acct-avatar-lg">{html.escape(initials)}</div>'
+        f'<div class="acct-name">{html.escape(name)}</div>'
+        f'<div class="acct-email">{html.escape(email)}</div>'
+        f'{role_chip}</div>',
+        unsafe_allow_html=True,
+    )
+
+    notes = db.get_notifications(user["id"], limit=8)
+    if notes:
+        hdr = f"Notifications · {unread} new" if unread else "Notifications"
+        st.markdown(f'<p style="font-weight:600;margin:6px 0 4px;">{html.escape(hdr)}</p>',
+                    unsafe_allow_html=True)
+        for nt in notes:
+            bg = "var(--accent-soft)" if not nt["read"] else "transparent"
+            st.markdown(
+                f'<div style="background:{bg};border:1px solid var(--border);border-radius:10px;'
+                f'padding:8px 10px;margin-bottom:6px;font-size:12.5px;line-height:1.45;">'
+                f'{html.escape(nt["message"])}'
+                f'<div class="muted" style="font-size:11px;margin-top:3px;">{(nt["created_at"] or "")[:16]}</div>'
+                f'</div>', unsafe_allow_html=True)
+        if unread and st.button("Mark all read", use_container_width=True, key="acct_mark_read"):
+            db.mark_notifications_read(user["id"])
+            st.rerun()
+        st.markdown('<div class="divider" style="margin:6px 0 !important;"></div>', unsafe_allow_html=True)
+
+    if role in ("customer", "analyst"):
+        if st.button("Payment history", use_container_width=True, key="acct_orders",
+                     icon=":material/receipt_long:"):
+            st.switch_page("pages/_orders.py")
+
+    if st.button("Log out", use_container_width=True, key="acct_logout"):
+        clear_session()  # revoke server-side session + clear the browser cookie
+        for k in list(st.session_state.keys()):
+            if k not in ("mmr_enabled", "show_tech_details"):  # preserve display prefs
+                st.session_state.pop(k, None)
+        st.session_state["_scroll_top"] = True
+        if role in ("admin", "seller"):
+            st.rerun()                                  # guest fallback renders Catalogue
+        else:
+            st.switch_page("pages/1_Catalogue.py")      # clean guest landing (#15)
+
+
+def render_account_menu(user: dict) -> None:
+    """Top-right circular avatar; clicking opens the account modal (identity,
+    notifications, payment history, logout). Pinned top-right via the
+    `.st-key-account_menu` scope in CSS."""
+    initials = _initials(user.get("display_name") or user.get("email", ""))
+    if db.unread_notifications(user["id"]):  # red dot on the avatar for unread
         st.markdown(
             "<style>.st-key-account_menu button{position:relative;}"
             ".st-key-account_menu button::after{content:'';position:absolute;top:1px;right:1px;"
             "width:12px;height:12px;border-radius:50%;background:#e8462a;border:2px solid #fff;}</style>",
             unsafe_allow_html=True,
         )
-    with st.popover(initials, use_container_width=False, key="account_menu"):
-        # Close the popover (#8) — small icon button pinned top-right; any click reruns.
-        _, _cl = st.columns([5, 1])
-        with _cl:
-            if st.button("", icon=":material/close:", key="acct_close", help="Close"):
-                st.rerun()
-        role_chip = (f'<span class="acct-role">{html.escape(role.capitalize())}</span>'
-                     if role in ("admin", "analyst") else "")
-        st.markdown(
-            '<div class="acct-pop">'
-            f'<div class="acct-avatar-lg">{html.escape(initials)}</div>'
-            f'<div class="acct-name">{html.escape(name)}</div>'
-            f'<div class="acct-email">{html.escape(email)}</div>'
-            f'{role_chip}'
-            '</div>',
-            unsafe_allow_html=True,
-        )
-
-        # ---------- notifications ----------
-        notes = db.get_notifications(user["id"], limit=8)
-        if notes:
-            hdr = f"Notifications · {unread} new" if unread else "Notifications"
-            st.markdown(f'<p style="font-weight:600;margin:6px 0 4px;">{html.escape(hdr)}</p>',
-                        unsafe_allow_html=True)
-            for nt in notes:
-                bg = "var(--accent-soft)" if not nt["read"] else "transparent"
-                st.markdown(
-                    f'<div style="background:{bg};border:1px solid var(--border);border-radius:10px;'
-                    f'padding:8px 10px;margin-bottom:6px;font-size:12.5px;line-height:1.45;">'
-                    f'{html.escape(nt["message"])}'
-                    f'<div class="muted" style="font-size:11px;margin-top:3px;">{(nt["created_at"] or "")[:16]}</div>'
-                    f'</div>', unsafe_allow_html=True)
-            if unread and st.button("Mark all read", use_container_width=True, key="acct_mark_read"):
-                db.mark_notifications_read(user["id"])
-                st.rerun()
-            st.markdown('<div class="divider" style="margin:6px 0 !important;"></div>', unsafe_allow_html=True)
-
-        # Payment history (only roles with a storefront / orders page registered).
-        if role in ("customer", "analyst"):
-            if st.button("Payment history", use_container_width=True, key="acct_orders",
-                         icon=":material/receipt_long:"):
-                st.switch_page("pages/_orders.py")
-
-        if st.button("Log out", use_container_width=True, key="acct_logout"):
-            _role = user.get("role", "customer")
-            clear_session()  # revoke server-side session + clear the browser cookie
-            for k in list(st.session_state.keys()):
-                if k not in ("mmr_enabled", "show_tech_details"):  # preserve display prefs
-                    st.session_state.pop(k, None)
-            st.session_state["_scroll_top"] = True
-            # Land on the Catalogue (a guest route). For customer/analyst it's in the
-            # current nav, so switch_page goes there cleanly with no "page not found"
-            # flash (#15). admin/seller navs lack it → fall back to a guest rerun.
-            if _role in ("admin", "seller"):
-                st.rerun()
-            else:
-                st.switch_page("pages/1_Catalogue.py")
+    if st.button(initials, key="account_menu"):
+        _account_dialog(user)
 
 
 def render_sidebar(user: dict) -> None:
