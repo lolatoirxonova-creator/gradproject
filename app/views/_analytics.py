@@ -188,11 +188,14 @@ def main():
     # avatar below the scrolling ticker so the two don't overlap.
     st.markdown(
         "<style>[data-testid='stSidebar'],[data-testid='stSidebarCollapsedControl'],"
-        "[data-testid='stLogo'],[data-testid='stLogoLink']{display:none!important;}"
+        "[data-testid='stHeader'],[data-testid='stLogo'],[data-testid='stLogoLink']"
+        "{display:none!important;}"
+        "[data-testid='stAppViewContainer']>.main,[data-testid='stAppViewContainer']"
+        "{padding-top:0!important;}"
         "[data-testid='stMainBlockContainer']{padding:0!important;max-width:100%!important;"
         "min-height:0!important;}"
         "[data-testid='stMainBlockContainer']::after{display:none!important;}"
-        ".st-key-account_menu{top:52px!important;right:30px!important;z-index:100001!important;}</style>",
+        ".st-key-account_menu{top:46px!important;right:30px!important;z-index:100001!important;}</style>",
         unsafe_allow_html=True,
     )
     shared.render_account_menu(user)
