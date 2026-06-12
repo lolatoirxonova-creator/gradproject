@@ -27,3 +27,8 @@ enableXsrfProtection = false
 
 [browser]
 gatherUsageStats = false
+
+[client]
+# Hide the developer toolbar (Deploy button / menu) at the framework level so it
+# never flashes top-right during cold load (where the Sign-in button sits).
+toolbarMode = "minimal"

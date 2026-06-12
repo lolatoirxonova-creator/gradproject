@@ -13,10 +13,27 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import streamlit as st
-from scipy.sparse import csr_matrix, load_npz
-from sklearn.preprocessing import normalize
+
+# NOTE: scipy.sparse + sklearn are imported lazily inside the recommender
+# functions (via _sparse()/_normalize()) so guest catalogue browsing doesn't pay
+# their ~2s import cost on cold start — the storefront only needs pandas/numpy.
 
 from app import auth, db
+
+
+def _normalize(*args, **kwargs):
+    from sklearn.preprocessing import normalize as _fn
+    return _fn(*args, **kwargs)
+
+
+def _csr_matrix(*args, **kwargs):
+    from scipy.sparse import csr_matrix as _fn
+    return _fn(*args, **kwargs)
+
+
+def _load_npz(*args, **kwargs):
+    from scipy.sparse import load_npz as _fn
+    return _fn(*args, **kwargs)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MODEL_DIR = REPO_ROOT / "models"
@@ -430,42 +447,46 @@ def prefetch_images_sync(items: list, max_workers: int = 6, timeout: float = 12.
         # render with the picsum fallback URL until the next prefetch warms them.
 
 
+@st.cache_data(show_spinner=False, max_entries=512)
+def _file_data_uri(path_str: str) -> str:
+    """Read a local image file and return a base64 data URI. Cached by path so
+    each committed product photo is read+encoded ONCE, not on every card render
+    (big catalogue/pagination speed-up)."""
+    import base64
+    data = Path(path_str).read_bytes()
+    return f"data:image/jpeg;base64,{base64.b64encode(data).decode()}"
+
+
 def _resolve_image_src(article_id: str, item: dict | None,
                        width: int = 400, height: int = 500) -> str:
     """Return the actual img src to embed in HTML.
 
-    Priority: disk-cached image (as base64 data URI) → picsum URL fallback.
-    The Pollinations URL is *not* used directly in img src because the browser
-    fetch can return 500 and Streamlit's markdown sanitiser strips `onerror`
-    handlers — leaving broken-image icons when remote fetches fail. Server-side
-    fetch (in `prefetch_images_sync`) sidesteps both issues.
+    Local committed photos are returned as cached base64 data URIs (see
+    _file_data_uri); the final fallback is a picsum URL.
     """
     aid = str(article_id)
-    import base64
     # Tier 0: seller-provided image URL (marketplace listings have no committed photo).
     if item:
         u = item.get("image_url")
         if isinstance(u, str) and u.strip().startswith(("http://", "https://", "data:")):
             return u.strip()
-    # Tier 0a: committed cosmetics product photo (Chiroyli catalogue).
+    # Tier 0a: committed cosmetics product photo (Barakaly catalogue).
     cos = ASSETS_DIR / "cosmetics" / f"{aid}.jpg"
     if cos.exists():
-        return f"data:image/jpeg;base64,{base64.b64encode(cos.read_bytes()).decode()}"
+        return _file_data_uri(str(cos))
     # Tier 0b: committed curated fashion photo (legacy demo catalogue).
     curated = ASSETS_DIR / "products" / f"{aid}.jpg"
     if curated.exists():
-        return f"data:image/jpeg;base64,{base64.b64encode(curated.read_bytes()).decode()}"
+        return _file_data_uri(str(curated))
     # Tier 1: locally-downloaded H&M product photos (if user has the 16 GB bundle)
     if len(aid) >= 3:
         local = IMAGE_DIR / aid[:3] / f"{aid}.jpg"
         if local.exists():
-            import base64
-            return f"data:image/jpeg;base64,{base64.b64encode(local.read_bytes()).decode()}"
+            return _file_data_uri(str(local))
     # Tier 2: cached Pollinations image (the prefetch path's output)
     cache = _cache_path(aid)
     if cache.exists() and cache.stat().st_size > 1024:
-        import base64
-        return f"data:image/jpeg;base64,{base64.b64encode(cache.read_bytes()).decode()}"
+        return _file_data_uri(str(cache))
     # Tier 3: picsum fallback — random but reliably loads without JS
     return _picsum_fallback_url(aid, width, height)
 
@@ -1206,7 +1227,7 @@ def load_articles() -> pd.DataFrame:
 def load_content_based():
     with open(MODEL_DIR / "content_based_vectorizer.pkl", "rb") as f:
         vec = pickle.load(f)
-    tfidf = load_npz(MODEL_DIR / "content_based_item_tfidf.npz")
+    tfidf = _load_npz(MODEL_DIR / "content_based_item_tfidf.npz")
     return vec, tfidf
 
 
@@ -1239,7 +1260,7 @@ def load_ncf():
     item_gmf = sd["item_gmf.weight"].cpu().numpy()
     item_mlp = sd["item_mlp.weight"].cpu().numpy()
     item_emb = np.concatenate([item_gmf, item_mlp], axis=1)
-    item_emb = normalize(item_emb, norm="l2", axis=1)
+    item_emb = _normalize(item_emb, norm="l2", axis=1)
     with open(map_path, "rb") as f:
         maps = pickle.load(f)
     return item_emb, maps["item_id_to_idx"], maps["idx_to_item_id"]
@@ -1334,7 +1355,7 @@ def build_user_profile(saved_articles, preferences, articles, tfidf, item_id_to_
     if not rows:
         return None
     profile = np.asarray(tfidf[rows].mean(axis=0))
-    return normalize(csr_matrix(profile), norm="l2", axis=1)
+    return _normalize(_csr_matrix(profile), norm="l2", axis=1)
 
 
 def recommend_cb(profile, tfidf, item_id_to_row, excluded, k, include=None):
@@ -1369,7 +1390,7 @@ def recommend_als(model, item_index, item_to_row, positives, excluded, k, includ
     cols = [item_to_row[a] for a in positives if a in item_to_row]
     if not cols:
         return None
-    user_items = csr_matrix(
+    user_items = _csr_matrix(
         (np.ones(len(cols), dtype=np.float32), ([0] * len(cols), cols)),
         shape=(1, len(item_index)),
     )
@@ -1416,7 +1437,7 @@ def recommend_hybrid(profile, tfidf, item_id_to_row, als_model, als_item_index,
     cf_score = np.zeros(len(candidate_items), dtype=np.float32)
     cols = [als_item_to_row[a] for a in positives if a in als_item_to_row]
     if cols:
-        user_items = csr_matrix(
+        user_items = _csr_matrix(
             (np.ones(len(cols), dtype=np.float32), ([0] * len(cols), cols)),
             shape=(1, len(als_item_index)),
         )
@@ -1545,7 +1566,7 @@ def _cosmetics_tfidf():
             + df["product_type_name"].fillna("") + " " + df["colour_group_name"].fillna("") + " "
             + df["index_group_name"].fillna("") + " " + df["detail_desc"].fillna(""))
     vec = TfidfVectorizer(max_features=2000, stop_words="english")
-    mat = normalize(vec.fit_transform(text.values))
+    mat = _normalize(vec.fit_transform(text.values))
     ids = df["article_id"].astype(str).tolist()
     return mat, ids, {a: i for i, a in enumerate(ids)}
 
@@ -1564,7 +1585,7 @@ def recommend_cosmetics(seed_ids=None, prefs=None, k: int = 12, exclude=None):
         rows = [id_to_row[a] for a in df[mask]["article_id"].astype(str) if a in id_to_row]
 
     if rows:
-        profile = normalize(csr_matrix(np.asarray(mat[rows].mean(axis=0))))
+        profile = _normalize(_csr_matrix(np.asarray(mat[rows].mean(axis=0))))
         scores = (profile @ mat.T).toarray().ravel()
         for r in rows:
             scores[r] = -np.inf  # don't recommend the seed items themselves
